@@ -1,4 +1,4 @@
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Token {
     Number(f64),
     Plus,
@@ -7,6 +7,8 @@ pub enum Token {
     Slash,
     SemiColon,
     Identifier(String),
+    LeftParen,
+    RightParen,
     Assign,
     Let,
     Eof,
@@ -15,6 +17,13 @@ pub enum Token {
 pub struct Lexer {
     source: String,
     current: usize,
+    current_line: usize,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct FilePosition {
+    pub line: usize,
+    pub column: usize,
 }
 
 impl Lexer {
@@ -22,86 +31,97 @@ impl Lexer {
         Self {
             source: source.to_string(),
             current: 0,
+            current_line: 0,
         }
     }
 
-    pub fn next(&mut self) -> Token {
+    pub fn next(&mut self) -> (Token, FilePosition) {
         let mut is_number = false;
         let mut current_number = String::new();
         let mut current_identifier = String::new();
         let mut is_identifier = false;
+        let mut pos = FilePosition { line: 0, column: 0 };
 
-        for c in self.source.chars().into_iter().skip(self.current) {
-            self.current += 1;
+        for (l, line) in self.source.lines().into_iter().skip(self.current_line).enumerate() {
+            for (ch, c) in line.chars().into_iter().skip(self.current).enumerate() {
+                pos = FilePosition { line: l, column: ch };
 
-            match c {
-                '+' => return Token::Plus,
-                '-' => return Token::Minus,
-                '*' => return Token::Star,
-                '/' => return Token::Slash,
-                ';' => return Token::SemiColon,
-                '=' => return Token::Assign,
-                _ => (),
-            }
+                self.current += 1;
 
-            if c.is_ascii_whitespace() {
-                if is_identifier {
-                    return Token::Identifier(current_identifier)
+                match c {
+                    '+' => return (Token::Plus, pos),
+                    '-' => return (Token::Minus, pos),
+                    '*' => return (Token::Star, pos),
+                    '/' => return (Token::Slash, pos),
+                    ';' => return (Token::SemiColon, pos),
+                    '=' => return (Token::Assign, pos),
+                    '(' => return (Token::LeftParen, pos),
+                    ')' => return (Token::RightParen, pos),
+                    _ => (),
                 }
 
-                continue;
-            }
+                if c.is_ascii_whitespace() {
+                    if is_identifier {
+                        return (Token::Identifier(current_identifier), pos);
+                    }
 
-            if c.is_ascii_digit() {
-                if !is_number {
-                    is_number = true;
+                    continue;
                 }
 
-                current_number.push(c);
+                if c.is_ascii_digit() {
+                    if !is_number {
+                        is_number = true;
+                    }
 
-                if !self
-                    .source
-                    .chars()
-                    .into_iter()
-                    .nth(self.current)
-                    .unwrap_or('c')
-                    .is_ascii_digit()
-                {
-                    if let Ok(n) = current_number.parse::<f64>() {
-                        return Token::Number(n);
+                    current_number.push(c);
+
+                    if !self
+                        .source
+                        .chars()
+                        .into_iter()
+                        .nth(self.current)
+                        .unwrap_or('c')
+                        .is_ascii_digit()
+                    {
+                        if let Ok(n) = current_number.parse::<f64>() {
+                            return (Token::Number(n), pos);
+                        }
+                    }
+                }
+
+                if c.is_ascii_alphanumeric() {
+                    if !is_identifier {
+                        is_identifier = true;
+                    }
+
+                    current_identifier.push(c);
+
+                    if self
+                        .source
+                        .chars()
+                        .into_iter()
+                        .nth(self.current)
+                        .unwrap_or(' ')
+                        .is_ascii_whitespace()
+                    {
+                        match current_identifier.as_str() {
+                            "let" => return (Token::Let, pos),
+                            _ => (),
+                        }
                     }
                 }
             }
 
-            if c.is_ascii_alphanumeric() {
-                if !is_identifier {
-                    is_identifier = true;
-                }
-
-                current_identifier.push(c);
-
-                if self
-                    .source
-                    .chars()
-                    .into_iter()
-                    .nth(self.current)
-                    .unwrap_or(' ')
-                    .is_ascii_whitespace()
-                {
-                    match current_identifier.as_str() {
-                        "let" => return Token::Let,
-                        _ => ()
-                    }
-                } 
-            }
+            self.current = 0;
+            self.current_line += 1;
         }
 
         if is_number {
             if let Ok(n) = current_number.parse::<f64>() {
-                return Token::Number(n);
+                return (Token::Number(n), pos);
             }
         }
 
-        Token::Eof
+        (Token::Eof, pos)
     }
 }

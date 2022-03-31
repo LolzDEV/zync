@@ -1,6 +1,4 @@
-use std::ops::Deref;
-
-use crate::lexer::{Lexer, Token};
+use crate::lexer::{Lexer, Token, FilePosition};
 
 #[derive(Debug, Clone)]
 pub enum Op {
@@ -12,252 +10,235 @@ pub enum Op {
 }
 
 #[derive(Debug, Clone)]
-pub enum Expr {
-    Number(f64, Option<Box<Expr>>),
-    BinaryExpr(
-        Option<Box<Expr>>,
-        Option<Op>,
-        Option<Box<Expr>>,
-        Option<Box<Expr>>,
-    ),
-    Let(Option<Box<Expr>>, Option<Box<Expr>>, Option<Box<Expr>>),
+pub enum AstNode {
+    Number(f64),
+    BinaryExpr {
+        lhs: Box<AstNode>,
+        op: Token,
+        rhs: Box<AstNode>,
+    },
     Identifier(String),
+    UnaryExpr {
+        op: Token,
+        rhs: Box<AstNode>,
+    },
+    Call {
+        id: Box<AstNode>,
+        args: Box<AstNode>,
+    },
+    Arguments(Vec<AstNode>),
+    Definition {
+        id: Box<AstNode>,
+        parameters: Box<AstNode>,
+    },
+    Block(Vec<AstNode>),
+    Parameters(Vec<AstNode>),
+    ExprStatement(Box<AstNode>),
+    LetStatement(Box<AstNode>),
+    Grouping(Box<AstNode>),
     None,
 }
 
-pub struct Ast;
+#[derive(Debug, Clone, Copy)]
+pub enum Error {
+    UnexpectedToken,
+    EndOfFile,
+}
 
-impl Ast {
-    pub fn parse(lexer: &mut Lexer) -> Expr {
-        let mut last = Expr::None;
-        let mut current = &mut Expr::None;
-        let mut last_let = Expr::None;
+pub struct Parser {
+    pub tokens: Vec<(Token, FilePosition)>,
+    pub position: usize,
+}
+
+impl Parser {
+    pub fn new(lexer: &mut Lexer) -> Self {
+        let mut tokens = Vec::new();
         loop {
-            match lexer.next() {
-                Token::Number(n) => match current {
-                    Expr::Number(_, _) => {
-                        panic!("Syntax error, expected operator but number found")
-                    }
-                    Expr::BinaryExpr(first, _, second, _) => {
-                        if let Some(_) = first {
-                            if let Some(_) = second {
-                                panic!("Syntax error, operator expected but number found");
-                            } else {
-                                *second = Some(Box::new(Expr::Number(n, None)));
-                            }
-                        } else {
-                            *first = Some(Box::new(Expr::Number(n, None)));
-                        }
-                    }
-                    Expr::None => *current = Expr::Number(n, None),
-                    Expr::Let(identifier, expr, _) => {
-                        if let Some(_) = identifier {
-                            if let Some(ex) = expr {
-                                let ex = ex.as_mut();
-                                if let Expr::BinaryExpr(first, op, second, _) = ex {
-                                    if let Some(_) = first {
-                                        if let Some(_) = op {
-                                            if let None = second {
-                                                *second = Some(Box::new(Expr::Number(n, None)));
-                                            } else {
-                                                panic!("Syntax error, ; expected but number found")
-                                            }
-                                        } else {
-                                            panic!(
-                                                "Syntax error, operator expected but number found"
-                                            )
-                                        }
-                                    } else {
-                                        panic!("Syntax error, unexpected number")
-                                    }
-                                }
-                            }
-                        } else {
-                            panic!("Syntax error, identifier expected but number found")
-                        }
-                    }
-                    Expr::Identifier(_) => panic!("Syntax error, unexpected identifier"),
-                },
-                Token::Plus => match current {
-                    Expr::Number(_, _) => {
-                        *current =
-                            Expr::BinaryExpr(Some(Box::new(current.clone())), Some(Op::Plus), None, None);
-                    }
-                    Expr::BinaryExpr(first, op, second, _) => {
-                        if let Some(_) = first {
-                            if let None = second {
-                                if let None = op {
-                                    *op = Some(Op::Plus)
-                                }
-                            } else {
-                                *current = Expr::BinaryExpr(
-                                    Some(Box::new(current.clone())),
-                                    Some(Op::Plus),
-                                    None,
-                                    None,
-                                )
-                            }
-                        } else {
-                            println!("Syntax error, expression expected but operator found")
-                        }
-                    }
-                    Expr::None => panic!("Syntax error, expression expected but operator found"),
-                    Expr::Let(_, _, _) => {}
-                    Expr::Identifier(_) => panic!("Syntax error, unexpected identifier"),
-                },
-                Token::Minus => match current {
-                    Expr::Number(_, _) => {
-                        *current =
-                            Expr::BinaryExpr(Some(Box::new(current.clone())), Some(Op::Minus), None, None);
-                    }
-                    Expr::BinaryExpr(first, op, second, _) => {
-                        if let Some(_) = first {
-                            if let None = second {
-                                if let None = op {
-                                    *op = Some(Op::Minus)
-                                }
-                            } else {
-                                *current = Expr::BinaryExpr(
-                                    Some(Box::new(current.clone())),
-                                    Some(Op::Minus),
-                                    None,
-                                    None,
-                                )
-                            }
-                        } else {
-                            println!("Syntax error, expression expected but operator found")
-                        }
-                    }
-                    Expr::None => panic!("Syntax error, expression expected but operator found"),
-                    Expr::Let(_, _, _) => panic!("Syntax error, ; expected but operator found"),
-                    Expr::Identifier(_) => panic!("Syntax error, unexpected identifier"),
-                },
-                Token::Star => match current {
-                    Expr::Number(_, _) => {
-                        *current =
-                            Expr::BinaryExpr(Some(Box::new(current.clone())), Some(Op::Star), None, None);
-                    }
-                    Expr::BinaryExpr(first, op, second, _) => {
-                        if let Some(_) = first {
-                            if let None = second {
-                                if let None = op {
-                                    *op = Some(Op::Star)
-                                }
-                            } else {
-                                *current = Expr::BinaryExpr(
-                                    Some(Box::new(current.clone())),
-                                    Some(Op::Star),
-                                    None,
-                                    None,
-                                )
-                            }
-                        } else {
-                            println!("Syntax error, expression expected but operator found")
-                        }
-                    }
-                    Expr::None => panic!("Syntax error, expression expected but operator found"),
-                    Expr::Let(_, _, _) => panic!("Syntax error, ; expected but operator found"),
-                    Expr::Identifier(_) => panic!("Syntax error, unexpected identifier"),
-                },
-                Token::Slash => match &mut current {
-                    Expr::Number(_, _) => {
-                        *current =
-                            Expr::BinaryExpr(Some(Box::new(current.clone())), Some(Op::Slash), None, None);
-                    }
-                    Expr::BinaryExpr(first, op, second, _) => {
-                        if let Some(_) = first {
-                            if let None = second {
-                                if let None = op {
-                                    *op = Some(Op::Slash)
-                                }
-                            } else {
-                                *current = Expr::BinaryExpr(
-                                    Some(Box::new(current.clone())),
-                                    Some(Op::Slash),
-                                    None,
-                                    None,
-                                )
-                            }
-                        } else {
-                            println!("Syntax error, expression expected but operator found")
-                        }
-                    }
-                    Expr::None => panic!("Syntax error, expression expected but operator found"),
-                    Expr::Let(_, _, _) => panic!("Syntax error, ; expected but operator found"),
-                    Expr::Identifier(_) => panic!("Syntax error, unexpected identifier"),
-                },
-                Token::SemiColon => {
-                    if let Expr::Let(id, expr, _) = &mut last_let {
-                        if let Expr::BinaryExpr(_, _, _, _) = current.clone() {
-                            *expr = Some(Box::new(current.clone()));
-                            *current = last_let.clone();
-                        }
-                    }
+            let tok = lexer.next();
+            if let (Token::Eof, _) = tok {
+                break;
+            }
+            tokens.push(tok);
+        }
 
-                    last_let = Expr::None;
+        Self {
+            tokens,
+            position: 0,
+        }
+    }
 
-                    match &mut last {
-                        Expr::Number(_, then) => *then = Some(Box::new(current.clone())),
-                        Expr::BinaryExpr(_, _, _, then) => *then = Some(Box::new(current.clone())),
-                        Expr::Let(_, _, then) => *then = Some(Box::new(current.clone())),
-                        Expr::None => last = current.clone(),
-                        Expr::Identifier(_) => panic!("Syntax error, unexpected identifier"),
-                    }
+    pub fn next_token(&mut self) -> Result<Token, Error> {
+        let (tok, _) = self
+            .tokens
+            .get(self.position)
+            .ok_or(Error::EndOfFile)?
+            .clone();
+        self.position += 1;
+        Ok(tok)
+    }
 
-                    *current = Expr::None;
-                }
-                Token::Eof => return last,
-                Token::Identifier(name) => match current {
-                    Expr::Number(_, _) => {
-                        panic!("Syntax error, operator expected but identifier found")
-                    }
-                    Expr::BinaryExpr(_, _, _, _) => {
-                        panic!("Syntax error, unknown expected but identifier found")
-                    }
-                    Expr::Let(id, expr, then) => {
-                        last_let = Expr::Let(id.clone(), expr.clone(), then.clone());
-                        if let None = id {
-                            *id = Some(Box::new(Expr::Identifier(name)));
-                        } else {
-                            panic!("Syntax error, = expected but identifier found")
-                        }
-                    }
-                    Expr::None => *current = Expr::Identifier(name),
-                    Expr::Identifier(_) => panic!("Syntax error, unexpected identifier"),
-                },
-                Token::Let => {
-                    if let Expr::None = *current {
-                        *current = Expr::Let(None, None, None);
-                    } else {
-                        panic!("Syntax error, unexpected `let`");
-                    }
-                }
-                Token::Assign => match current {
-                    Expr::Number(_, _) => {
-                        panic!("Syntax error, identifier expected but number found");
-                    }
-                    Expr::BinaryExpr(first, op, second, _) => {
-                        if let Some(first) = first {
-                            if let Expr::Identifier(_) = (*first).deref() {
-                                if let None = second {
-                                    if let None = op {
-                                        *op = Some(Op::Assign)
-                                    }
-                                } else {
-                                    panic!("Syntax error, unexpected =")
-                                }
-                            } else {
-                                panic!("Syntax error, unexpected =")
-                            }
-                        } else {
-                            println!("Syntax error, expression expected but operator found")
-                        }
-                    }
-                    Expr::None => panic!("Syntax error, expression expected but operator found"),
-                    Expr::Let(id, _, _) => *current = Expr::BinaryExpr(id.clone(), Some(Op::Assign), None, None),
-                    Expr::Identifier(_) => panic!("Syntax error, unexpected identifier"),
-                },
+    pub fn check(&mut self, token: Token) -> Result<(), Error> {
+        if self
+            .tokens
+            .get(self.position)
+            .ok_or(Error::EndOfFile)?
+            .clone().0
+            == token
+        {
+            Ok(())
+        } else {
+            Err(Error::UnexpectedToken)
+        }
+    }
+
+    pub fn expect(&mut self, tokens: Vec<Token>) -> Result<(), Error> {
+        for tok in tokens.iter() {
+            if let Ok(_) = self.check(tok.clone()) {
+                self.position += 1;
+                return Ok(());
             }
         }
+
+        Err(Error::UnexpectedToken)
+    }
+
+    pub fn previous(&mut self) -> Result<Token, Error> {
+        let (tok, _) = self
+            .tokens
+            .get(self.position - 1)
+            .ok_or(Error::EndOfFile)?
+            .clone();
+        Ok(tok)
+    }
+
+    pub fn consume(&mut self, token: Token) -> Result<(), Error> {
+        if let Ok(_) = self.check(token) {
+            self.position += 1;
+            Ok(())
+        } else {
+            Err(Error::UnexpectedToken)
+        }
+    }
+
+    pub fn statement(&mut self) -> Result<AstNode, Error> {
+        if let Ok(_) = self.expect(vec![Token::Let]) {
+            return self.let_statement();
+        }
+
+        self.expr_statement()
+    }
+
+    pub fn expr_statement(&mut self) -> Result<AstNode, Error> {
+        let stmt = Ok(AstNode::ExprStatement(Box::new(self.expr()?)));
+        self.consume(Token::SemiColon)?;
+        stmt
+    }
+
+    pub fn let_statement(&mut self) -> Result<AstNode, Error> {
+        let stmt = Ok(AstNode::LetStatement(Box::new(self.expr()?)));
+        self.consume(Token::SemiColon)?;
+        stmt
+    }
+
+    pub fn expr(&mut self) -> Result<AstNode, Error> {
+        self.assignment()
+    }
+
+    pub fn assignment(&mut self) -> Result<AstNode, Error> {
+        let mut lhs = self.term()?;
+
+        while let Ok(_) = self.expect(vec![Token::Assign]) {
+            let operator = self.previous()?;
+
+            let rhs = self.term()?;
+            lhs = AstNode::BinaryExpr { lhs: Box::new(lhs), op: operator, rhs: Box::new(rhs) }
+        }
+
+        Ok(lhs)
+    }
+
+    pub fn term(&mut self) -> Result<AstNode, Error> {
+        let mut lhs = self.factor()?;
+
+        while let Ok(_) = self.expect(vec![Token::Minus, Token::Plus]) {
+            let operator = self.previous()?;
+
+            let rhs = self.factor()?;
+            lhs = AstNode::BinaryExpr {
+                lhs: Box::new(lhs),
+                op: operator,
+                rhs: Box::new(rhs),
+            };
+        }
+
+        Ok(lhs)
+    }
+
+    pub fn factor(&mut self) -> Result<AstNode, Error> {
+        let mut expr = self.unary()?;
+
+        while let Ok(_) = self.expect(vec![Token::Star, Token::Slash]) {
+            let operator = self.previous()?;
+            let rhs = self.unary()?;
+            expr = AstNode::BinaryExpr {
+                lhs: Box::new(expr),
+                op: operator,
+                rhs: Box::new(rhs),
+            }
+        }
+
+        Ok(expr)
+    }
+
+    pub fn unary(&mut self) -> Result<AstNode, Error> {
+        if let Ok(_) = self.expect(vec![Token::Minus]) {
+            let op = self.previous()?;
+            let rhs = self.unary()?;
+
+            return Ok(AstNode::UnaryExpr {
+                op,
+                rhs: Box::new(rhs),
+            });
+        }
+
+        self.primary()
+    }
+
+    pub fn primary(&mut self) -> Result<AstNode, Error> {
+        if let Token::Number(n) = self.next_token()? {
+            return Ok(AstNode::Number(n));
+        }
+
+        self.position -= 1;
+
+        if let Token::Identifier(s) = self.next_token()? {
+            return Ok(AstNode::Identifier(s));
+        }
+
+        self.position -= 1;
+
+        if let Ok(_) = self.expect(vec![Token::LeftParen]) {
+            let expr = self.expr()?;
+            self.consume(Token::RightParen)?;
+
+            return Ok(AstNode::Grouping(Box::new(expr)));
+        }
+
+        Err(Error::UnexpectedToken)
+    }
+
+    pub fn parse(&mut self) -> Result<Vec<AstNode>, Error> {
+        let mut statements = Vec::new();
+
+        loop {
+
+            match self.statement() {
+                Ok(st) => statements.push(st),
+                Err(Error::EndOfFile) => break,
+                Err(e) => return Err(e),
+            }
+
+        }
+        Ok(statements)
     }
 }

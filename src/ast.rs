@@ -1,4 +1,4 @@
-use crate::lexer::{Lexer, Token, FilePosition};
+use crate::lexer::{FilePosition, Lexer, Token};
 
 #[derive(Debug, Clone)]
 pub enum Op {
@@ -30,6 +30,7 @@ pub enum AstNode {
     Definition {
         id: Box<AstNode>,
         parameters: Box<AstNode>,
+        block: Box<AstNode>,
     },
     Block(Vec<AstNode>),
     Parameters(Vec<AstNode>),
@@ -82,7 +83,8 @@ impl Parser {
             .tokens
             .get(self.position)
             .ok_or(Error::EndOfFile)?
-            .clone().0
+            .clone()
+            .0
             == token
         {
             Ok(())
@@ -120,9 +122,38 @@ impl Parser {
         }
     }
 
+    pub fn block(&mut self) -> Result<AstNode, Error> {
+        self.consume(Token::LeftBracket)?;
+
+        let mut statements = Vec::new();
+
+        while let Err(_) = self.expect(vec![Token::RightBracket]) {
+            statements.push(self.statement()?);
+        }
+
+        if statements.len() > 0 {
+            Ok(AstNode::Block(statements))
+        } else {
+            Err(Error::UnexpectedToken)
+        }
+    }
+
     pub fn statement(&mut self) -> Result<AstNode, Error> {
         if let Ok(_) = self.expect(vec![Token::Let]) {
             return self.let_statement();
+        }
+
+        if let Ok(_) = self.expect(vec![Token::Fn]) {
+            return self.fn_statement();
+        }
+
+        if let Token::Identifier(id) = self.next_token()? {
+            if let Ok(args) = self.arguments() {
+                self.consume(Token::SemiColon)?;
+                return Ok(AstNode::Call { id: Box::new(AstNode::Identifier(id)), args: Box::new(args) });
+            } else {
+                self.position -= 2;
+            }
         }
 
         self.expr_statement()
@@ -132,6 +163,38 @@ impl Parser {
         let stmt = Ok(AstNode::ExprStatement(Box::new(self.expr()?)));
         self.consume(Token::SemiColon)?;
         stmt
+    }
+
+    pub fn parameters(&mut self) -> Result<AstNode, Error> {
+        self.consume(Token::LeftParen)?;
+
+        let mut params = Vec::new();
+
+        while let Err(_) = self.expect(vec![Token::RightParen]) {
+            params.push(self.primary()?);
+        }
+
+        Ok(AstNode::Parameters(params))
+    }
+
+    pub fn arguments(&mut self) -> Result<AstNode, Error> {
+        self.consume(Token::LeftParen)?;
+
+        let mut args = Vec::new();
+
+        while let Err(_) = self.expect(vec![Token::RightParen]) {
+            args.push(self.expr()?);
+        }
+
+        Ok(AstNode::Arguments(args))
+    }
+
+    pub fn fn_statement(&mut self) -> Result<AstNode, Error> {
+        Ok(AstNode::Definition {
+            id: Box::new(self.primary()?),
+            parameters: Box::new(self.parameters()?),
+            block: Box::new(self.block()?),
+        })
     }
 
     pub fn let_statement(&mut self) -> Result<AstNode, Error> {
@@ -151,7 +214,11 @@ impl Parser {
             let operator = self.previous()?;
 
             let rhs = self.term()?;
-            lhs = AstNode::BinaryExpr { lhs: Box::new(lhs), op: operator, rhs: Box::new(rhs) }
+            lhs = AstNode::BinaryExpr {
+                lhs: Box::new(lhs),
+                op: operator,
+                rhs: Box::new(rhs),
+            }
         }
 
         Ok(lhs)
@@ -231,13 +298,11 @@ impl Parser {
         let mut statements = Vec::new();
 
         loop {
-
             match self.statement() {
                 Ok(st) => statements.push(st),
                 Err(Error::EndOfFile) => break,
                 Err(e) => return Err(e),
             }
-
         }
         Ok(statements)
     }

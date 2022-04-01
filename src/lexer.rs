@@ -10,7 +10,10 @@ pub enum Token {
     LeftParen,
     RightParen,
     Assign,
+    LeftBracket,
+    RightBracket,
     Let,
+    Fn,
     Eof,
 }
 
@@ -57,6 +60,8 @@ impl Lexer {
                     '=' => return (Token::Assign, pos),
                     '(' => return (Token::LeftParen, pos),
                     ')' => return (Token::RightParen, pos),
+                    '{' => return (Token::LeftBracket, pos),
+                    '}' => return (Token::RightBracket, pos),
                     _ => (),
                 }
 
@@ -106,6 +111,7 @@ impl Lexer {
                     {
                         match current_identifier.as_str() {
                             "let" => return (Token::Let, pos),
+                            "fn" => return (Token::Fn, pos),
                             _ => (),
                         }
                     }

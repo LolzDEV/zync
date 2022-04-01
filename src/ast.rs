@@ -131,11 +131,7 @@ impl Parser {
             statements.push(self.statement()?);
         }
 
-        if statements.len() > 0 {
-            Ok(AstNode::Block(statements))
-        } else {
-            Err(Error::UnexpectedToken)
-        }
+        Ok(AstNode::Block(statements))
     }
 
     pub fn statement(&mut self) -> Result<AstNode, Error> {
@@ -150,10 +146,15 @@ impl Parser {
         if let Token::Identifier(id) = self.next_token()? {
             if let Ok(args) = self.arguments() {
                 self.consume(Token::SemiColon)?;
-                return Ok(AstNode::Call { id: Box::new(AstNode::Identifier(id)), args: Box::new(args) });
+                return Ok(AstNode::Call {
+                    id: Box::new(AstNode::Identifier(id)),
+                    args: Box::new(args),
+                });
             } else {
                 self.position -= 2;
             }
+        } else {
+            self.position -= 1;
         }
 
         self.expr_statement()
@@ -168,25 +169,43 @@ impl Parser {
     pub fn parameters(&mut self) -> Result<AstNode, Error> {
         self.consume(Token::LeftParen)?;
 
-        let mut params = Vec::new();
+        let param = self.primary();
 
-        while let Err(_) = self.expect(vec![Token::RightParen]) {
-            params.push(self.primary()?);
+        if let Ok(param) = param {
+            let mut params = vec![param];
+
+            while let Ok(_) = self.expect(vec![Token::Comma]) {
+                params.push(self.primary()?);
+            }
+
+            self.consume(Token::RightParen)?;
+
+            Ok(AstNode::Parameters(params))
+        } else {
+            self.consume(Token::RightParen)?;
+            Ok(AstNode::Parameters(vec![]))
         }
-
-        Ok(AstNode::Parameters(params))
     }
 
     pub fn arguments(&mut self) -> Result<AstNode, Error> {
         self.consume(Token::LeftParen)?;
 
-        let mut args = Vec::new();
+        let arg = self.expr();
 
-        while let Err(_) = self.expect(vec![Token::RightParen]) {
-            args.push(self.expr()?);
+        if let Ok(arg) = arg {
+            let mut args = vec![arg];
+
+            while let Ok(_) = self.expect(vec![Token::Comma]) {
+                args.push(self.expr()?);
+            }
+
+            self.consume(Token::RightParen)?;
+
+            Ok(AstNode::Arguments(args))
+        } else {
+            self.consume(Token::RightParen)?;
+            Ok(AstNode::Arguments(vec![]))
         }
-
-        Ok(AstNode::Arguments(args))
     }
 
     pub fn fn_statement(&mut self) -> Result<AstNode, Error> {

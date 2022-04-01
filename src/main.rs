@@ -1,30 +1,19 @@
 use std::fs;
 
+use interpreter::Interpreter;
 use lexer::Lexer;
 
 use crate::{ast::Parser, lexer::Token};
 
 pub mod ast;
 pub mod lexer;
+pub mod interpreter;
 
 fn main() {
     let source = fs::read_to_string("./test.zy").unwrap();
-    let mut lexer = Lexer::new(&source);
+    
+    let mut interpreter = Interpreter::new(&source).unwrap();
+    println!("{:?}", interpreter.ast);
+    interpreter.interpret();
 
-    loop {
-        let tok = lexer.next();
-        if let (Token::Eof, _) = tok {
-            break;
-        }
-
-        println!("Token: {:?}", tok.0)
-    }
-
-    let mut lexer = Lexer::new(&source);
-
-    let mut parser = Parser::new(&mut lexer);
-
-    let ast = parser.parse();
-
-    println!("{:?}", ast);
 }

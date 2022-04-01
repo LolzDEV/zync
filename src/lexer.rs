@@ -1,3 +1,5 @@
+const NOT_IDENTIFIER: [char; 12] = ['+', '-', '/', '*', '=', ';', '(', ')', '{', '}', ' ', ','];
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Token {
     Number(f64),
@@ -14,6 +16,7 @@ pub enum Token {
     RightBracket,
     Let,
     Fn,
+    Comma,
     Eof,
 }
 
@@ -45,9 +48,18 @@ impl Lexer {
         let mut is_identifier = false;
         let mut pos = FilePosition { line: 0, column: 0 };
 
-        for (l, line) in self.source.lines().into_iter().skip(self.current_line).enumerate() {
+        for (l, line) in self
+            .source
+            .lines()
+            .into_iter()
+            .skip(self.current_line)
+            .enumerate()
+        {
             for (ch, c) in line.chars().into_iter().skip(self.current).enumerate() {
-                pos = FilePosition { line: l, column: ch };
+                pos = FilePosition {
+                    line: l,
+                    column: ch,
+                };
 
                 self.current += 1;
 
@@ -62,14 +74,12 @@ impl Lexer {
                     ')' => return (Token::RightParen, pos),
                     '{' => return (Token::LeftBracket, pos),
                     '}' => return (Token::RightBracket, pos),
+                    ',' => return (Token::Comma, pos),
                     _ => (),
                 }
 
                 if c.is_ascii_whitespace() {
-                    if is_identifier {
-                        return (Token::Identifier(current_identifier), pos);
-                    }
-
+                    current_identifier = String::new();
                     continue;
                 }
 
@@ -101,18 +111,24 @@ impl Lexer {
 
                     current_identifier.push(c);
 
-                    if self
+                    let next = self
                         .source
+                        .lines()
+                        .into_iter()
+                        .nth(self.current_line)
+                        .unwrap_or(" ")
                         .chars()
                         .into_iter()
                         .nth(self.current)
-                        .unwrap_or(' ')
-                        .is_ascii_whitespace()
-                    {
+                        .unwrap_or(' ');
+
+                    if NOT_IDENTIFIER.contains(&next) {
                         match current_identifier.as_str() {
                             "let" => return (Token::Let, pos),
                             "fn" => return (Token::Fn, pos),
-                            _ => (),
+                            _ => {
+                                return (Token::Identifier(current_identifier), pos);
+                            }
                         }
                     }
                 }

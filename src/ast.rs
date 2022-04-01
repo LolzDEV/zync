@@ -1,4 +1,6 @@
-use crate::lexer::{FilePosition, Lexer, Token};
+use inkwell::{types::{FunctionType, BasicMetadataTypeEnum}, context::Context};
+
+use crate::{lexer::{FilePosition, Lexer, Token}, compiler::Value};
 
 #[derive(Debug, Clone)]
 pub enum Op {
@@ -7,6 +9,28 @@ pub enum Op {
     Star,
     Slash,
     Assign,
+}
+
+#[derive(Debug, Clone)]
+pub enum Type {
+    Number,
+    Void,
+}
+
+impl Type {
+    pub fn to_function_type<'a>(&self, context: &'a Context, params: &[BasicMetadataTypeEnum<'a>]) -> FunctionType<'a> {
+        match self {
+            Type::Number => context.f64_type().fn_type(params, false),
+            Type::Void => context.void_type().fn_type(params, false),
+        }
+    }
+
+    pub fn to_type<'a>(&self, context: &'a Context) -> Option<BasicMetadataTypeEnum<'a>> {
+        match self {
+            Type::Number => Some(context.f64_type().into()),
+            Type::Void => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -32,11 +56,14 @@ pub enum AstNode {
         parameters: Box<AstNode>,
         block: Box<AstNode>,
     },
+    RetStatement(Box<AstNode>),
     Block(Vec<AstNode>),
-    Parameters(Vec<AstNode>),
+    Parameter(Box<AstNode>, Type),
+    Parameters(Vec<AstNode>, Type),
     ExprStatement(Box<AstNode>),
     LetStatement(Box<AstNode>),
     Grouping(Box<AstNode>),
+    Type(Type),
     None,
 }
 
@@ -143,21 +170,33 @@ impl Parser {
             return self.fn_statement();
         }
 
+        if let Ok(_) = self.expect(vec![Token::Ret]) {
+            return self.ret_statement();
+        }
+
         if let Token::Identifier(id) = self.next_token()? {
-            if let Ok(args) = self.arguments() {
+            if let Ok(_) = self.expect(vec![Token::LeftParen]) {
+                let args = self.arguments()?;
+                self.consume(Token::RightParen)?;
                 self.consume(Token::SemiColon)?;
                 return Ok(AstNode::Call {
                     id: Box::new(AstNode::Identifier(id)),
                     args: Box::new(args),
                 });
             } else {
-                self.position -= 2;
+                self.position -= 1;
             }
         } else {
             self.position -= 1;
         }
 
         self.expr_statement()
+    }
+
+    pub fn ret_statement(&mut self) -> Result<AstNode, Error> {
+        let stmt = Ok(AstNode::RetStatement(Box::new(self.expr()?)));
+        self.consume(Token::SemiColon)?;
+        stmt
     }
 
     pub fn expr_statement(&mut self) -> Result<AstNode, Error> {
@@ -169,27 +208,31 @@ impl Parser {
     pub fn parameters(&mut self) -> Result<AstNode, Error> {
         self.consume(Token::LeftParen)?;
 
-        let param = self.primary();
+        let param = self.param();
 
-        if let Ok(param) = param {
+        let params = if let Ok(param) = param {
             let mut params = vec![param];
 
             while let Ok(_) = self.expect(vec![Token::Comma]) {
-                params.push(self.primary()?);
+                params.push(self.param()?);
             }
 
             self.consume(Token::RightParen)?;
 
-            Ok(AstNode::Parameters(params))
+            params
         } else {
             self.consume(Token::RightParen)?;
-            Ok(AstNode::Parameters(vec![]))
-        }
+            vec![]
+        };
+
+        self.consume(Token::ReturnArrow)?;
+
+        let ret = self.ty()?;
+
+        Ok(AstNode::Parameters(params, ret))
     }
 
     pub fn arguments(&mut self) -> Result<AstNode, Error> {
-        self.consume(Token::LeftParen)?;
-
         let arg = self.expr();
 
         if let Ok(arg) = arg {
@@ -199,11 +242,9 @@ impl Parser {
                 args.push(self.expr()?);
             }
 
-            self.consume(Token::RightParen)?;
 
             Ok(AstNode::Arguments(args))
         } else {
-            self.consume(Token::RightParen)?;
             Ok(AstNode::Arguments(vec![]))
         }
     }
@@ -324,5 +365,22 @@ impl Parser {
             }
         }
         Ok(statements)
+    }
+
+    pub fn ty(&mut self) -> Result<Type, Error> {
+        if let Token::NumberType = self.next_token()? {
+            return Ok(Type::Number);
+        }
+
+        self.position -= 1;
+
+        Err(Error::UnexpectedToken)
+    }
+
+    pub fn param(&mut self) -> Result<AstNode, Error> {
+        let param = self.primary()?;
+        self.consume(Token::Colon)?;
+        let ty = self.ty()?;
+        Ok(AstNode::Parameter(Box::new(param), ty))
     }
 }

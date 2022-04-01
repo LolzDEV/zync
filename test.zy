@@ -1,2 +1,3 @@
-let a = 1;
-1+1+a;
+fn test() -> number {
+    ret 1 + 1;
+}

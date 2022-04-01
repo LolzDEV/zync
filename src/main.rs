@@ -1,19 +1,37 @@
-use std::fs;
+use std::{env, fs, process::exit};
 
-use interpreter::Interpreter;
+use ast::Parser;
+use compiler::Compiler;
+use inkwell::context::Context;
 use lexer::Lexer;
 
-use crate::{ast::Parser, lexer::Token};
-
 pub mod ast;
+pub mod compiler;
 pub mod lexer;
-pub mod interpreter;
 
 fn main() {
-    let source = fs::read_to_string("./test.zy").unwrap();
-    
-    let mut interpreter = Interpreter::new(&source).unwrap();
-    println!("{:?}", interpreter.ast);
-    interpreter.interpret();
+    let args: Vec<String> = env::args().collect();
 
+    if args.len() < 2 {
+        println!("Usage: zync `filename`");
+        exit(-1);
+    }
+
+    let source = fs::read_to_string(args.get(1).unwrap()).unwrap();
+
+    let context = Context::create();
+    let module = context.create_module(args.get(1).unwrap());
+    let builder = context.create_builder();
+
+    let mut lexer = Lexer::new(&source);
+    let mut parser = Parser::new(&mut lexer);
+
+    println!("{:?}\n{:?}", parser.parse(), parser.tokens);
+    
+    let mut lexer = Lexer::new(&source);
+    let mut parser = Parser::new(&mut lexer);
+
+    let mut compiler = Compiler::new(&context, &builder, &module);
+
+    compiler.compile(parser.parse().unwrap());
 }

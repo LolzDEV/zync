@@ -16,7 +16,12 @@ pub enum Token {
     RightBracket,
     Let,
     Fn,
+    ReturnArrow,
     Comma,
+    Colon,
+    Ret,
+    NumberType,
+    VoidType,
     Eof,
 }
 
@@ -38,6 +43,25 @@ impl Lexer {
             source: source.to_string(),
             current: 0,
             current_line: 0,
+        }
+    }
+
+    pub fn match_char(&self, ch: char) -> bool {
+        if self
+            .source
+            .lines()
+            .into_iter()
+            .nth(self.current_line)
+            .unwrap_or(" ")
+            .chars()
+            .into_iter()
+            .nth(self.current)
+            .unwrap_or(' ')
+            == ch
+        {
+            true
+        } else {
+            false
         }
     }
 
@@ -65,7 +89,14 @@ impl Lexer {
 
                 match c {
                     '+' => return (Token::Plus, pos),
-                    '-' => return (Token::Minus, pos),
+                    '-' => {
+                        if self.match_char('>') {
+                            self.current += 1;
+                            return (Token::ReturnArrow, pos);
+                        } else {
+                            return (Token::Minus, pos);
+                        }
+                    }
                     '*' => return (Token::Star, pos),
                     '/' => return (Token::Slash, pos),
                     ';' => return (Token::SemiColon, pos),
@@ -75,6 +106,7 @@ impl Lexer {
                     '{' => return (Token::LeftBracket, pos),
                     '}' => return (Token::RightBracket, pos),
                     ',' => return (Token::Comma, pos),
+                    ':' => return (Token::Colon, pos),
                     _ => (),
                 }
 
@@ -92,6 +124,10 @@ impl Lexer {
 
                     if !self
                         .source
+                        .lines()
+                        .into_iter()
+                        .nth(self.current_line)
+                        .unwrap_or(" ")
                         .chars()
                         .into_iter()
                         .nth(self.current)
@@ -126,6 +162,9 @@ impl Lexer {
                         match current_identifier.as_str() {
                             "let" => return (Token::Let, pos),
                             "fn" => return (Token::Fn, pos),
+                            "number" => return (Token::NumberType, pos),
+                            "void" => return (Token::VoidType, pos),
+                            "ret" => return (Token::Ret, pos), 
                             _ => {
                                 return (Token::Identifier(current_identifier), pos);
                             }

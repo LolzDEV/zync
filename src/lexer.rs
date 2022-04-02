@@ -1,4 +1,4 @@
-const NOT_IDENTIFIER: [char; 12] = ['+', '-', '/', '*', '=', ';', '(', ')', '{', '}', ' ', ','];
+const NOT_IDENTIFIER: [char; 13] = ['+', '-', '/', '*', '=', ';', '(', ')', '{', '}', ' ', ',', ':'];
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Token {

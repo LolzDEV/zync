@@ -1,0 +1,7 @@
+fn test(b: number) -> number;
+
+fn main() -> number {
+    let b = test(1) + 1;
+
+    ret 1;
+}

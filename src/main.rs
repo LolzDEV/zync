@@ -1,6 +1,11 @@
-use std::{env, fs, process::exit};
+use std::{
+    env, fs,
+    path::Path,
+    process::{exit, Command},
+};
 
 use ast::Parser;
+use colored::Colorize;
 use compiler::Compiler;
 use inkwell::context::Context;
 use lexer::Lexer;
@@ -17,21 +22,59 @@ fn main() {
         exit(-1);
     }
 
-    let source = fs::read_to_string(args.get(1).unwrap()).unwrap();
+    for file in args.iter().skip(1) {
+        let source = fs::read_to_string(file).unwrap();
 
-    let context = Context::create();
-    let module = context.create_module(args.get(1).unwrap());
-    let builder = context.create_builder();
+        let context = Context::create();
+        let module = context.create_module(file);
+        let builder = context.create_builder();
 
-    let mut lexer = Lexer::new(&source);
-    let mut parser = Parser::new(&mut lexer);
+        //let mut lexer = Lexer::new(&source);
+        //let mut parser = Parser::new(&mut lexer);
 
-    println!("{:?}\n{:?}", parser.parse(), parser.tokens);
-    
-    let mut lexer = Lexer::new(&source);
-    let mut parser = Parser::new(&mut lexer);
+        //println!("{:?}\n{:?}", parser.parse(), parser.tokens);
 
-    let mut compiler = Compiler::new(&context, &builder, &module);
+        let mut lexer = Lexer::new(&source);
+        let mut parser = Parser::new(&mut lexer);
 
-    compiler.compile(parser.parse().unwrap());
+        let mut compiler = Compiler::new(&context, &builder, &module);
+
+        println!("{}: Compiling source code", "[INFO]".green());
+        compiler.compile(parser.parse().unwrap());
+
+        println!("{}: Generating IR file", "[INFO]".green());
+        module
+            .print_to_file(Path::new(&format!("{}.ll", file)))
+            .unwrap();
+
+        println!("{}: Assembling IR", "[INFO]".green());
+        Command::new("llc")
+            .args([
+                "-filetype=obj",
+                &format!("{}.ll", file),
+                "-o",
+                &format!("{}.o", file),
+            ])
+            .status()
+            .unwrap();
+    }
+
+    let mut objects = Vec::new();
+    for file in args.iter().skip(1) {
+        objects.push(format!("{}.o", file));
+    }
+    println!("{}: Linking", "[INFO]".green());
+    Command::new("clang")
+        .args(objects.as_slice())
+        .args(["-o", "a.out"])
+        .status()
+        .unwrap();
+    for file in args.iter().skip(1) {
+        println!("{}: Cleaning", "[INFO]".green());
+        Command::new("rm")
+            .args(["-rf", &format!("{}.ll", file), &format!("{}.o", file)])
+            .status()
+            .unwrap();
+        println!("{}: Done", "[INFO]".green());
+    }
 }

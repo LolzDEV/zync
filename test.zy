@@ -1,3 +1,0 @@
-fn test() -> number {
-    ret 1 + 1;
-}

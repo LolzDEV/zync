@@ -1,6 +1,9 @@
-use inkwell::{types::{FunctionType, BasicMetadataTypeEnum}, context::Context};
+use inkwell::{
+    context::Context,
+    types::{BasicMetadataTypeEnum, FunctionType},
+};
 
-use crate::{lexer::{FilePosition, Lexer, Token}, compiler::Value};
+use crate::lexer::{FilePosition, Lexer, Token};
 
 #[derive(Debug, Clone)]
 pub enum Op {
@@ -18,7 +21,11 @@ pub enum Type {
 }
 
 impl Type {
-    pub fn to_function_type<'a>(&self, context: &'a Context, params: &[BasicMetadataTypeEnum<'a>]) -> FunctionType<'a> {
+    pub fn to_function_type<'a>(
+        &self,
+        context: &'a Context,
+        params: &[BasicMetadataTypeEnum<'a>],
+    ) -> FunctionType<'a> {
         match self {
             Type::Number => context.f64_type().fn_type(params, false),
             Type::Void => context.void_type().fn_type(params, false),
@@ -162,32 +169,16 @@ impl Parser {
     }
 
     pub fn statement(&mut self) -> Result<AstNode, Error> {
-        if let Ok(_) = self.expect(vec![Token::Let]) {
-            return self.let_statement();
-        }
-
         if let Ok(_) = self.expect(vec![Token::Fn]) {
             return self.fn_statement();
         }
 
-        if let Ok(_) = self.expect(vec![Token::Ret]) {
-            return self.ret_statement();
+        if let Ok(_) = self.expect(vec![Token::Let]) {
+            return self.let_statement();
         }
 
-        if let Token::Identifier(id) = self.next_token()? {
-            if let Ok(_) = self.expect(vec![Token::LeftParen]) {
-                let args = self.arguments()?;
-                self.consume(Token::RightParen)?;
-                self.consume(Token::SemiColon)?;
-                return Ok(AstNode::Call {
-                    id: Box::new(AstNode::Identifier(id)),
-                    args: Box::new(args),
-                });
-            } else {
-                self.position -= 1;
-            }
-        } else {
-            self.position -= 1;
+        if let Ok(_) = self.expect(vec![Token::Ret]) {
+            return self.ret_statement();
         }
 
         self.expr_statement()
@@ -242,7 +233,6 @@ impl Parser {
                 args.push(self.expr()?);
             }
 
-
             Ok(AstNode::Arguments(args))
         } else {
             Ok(AstNode::Arguments(vec![]))
@@ -250,11 +240,21 @@ impl Parser {
     }
 
     pub fn fn_statement(&mut self) -> Result<AstNode, Error> {
-        Ok(AstNode::Definition {
-            id: Box::new(self.primary()?),
-            parameters: Box::new(self.parameters()?),
-            block: Box::new(self.block()?),
-        })
+        let id = self.identifier()?;
+        let params = self.parameters()?;
+        if let Ok(_) = self.expect(vec![Token::SemiColon]) {
+            Ok(AstNode::Definition {
+                id: Box::new(id),
+                parameters: Box::new(params),
+                block: Box::new(AstNode::None),
+            })
+        } else {
+            Ok(AstNode::Definition {
+                id: Box::new(id),
+                parameters: Box::new(params),
+                block: Box::new(self.block()?),
+            })
+        }
     }
 
     pub fn let_statement(&mut self) -> Result<AstNode, Error> {
@@ -339,7 +339,16 @@ impl Parser {
         self.position -= 1;
 
         if let Token::Identifier(s) = self.next_token()? {
-            return Ok(AstNode::Identifier(s));
+            if let Ok(_) = self.expect(vec![Token::LeftParen]) {
+                let args = self.arguments()?;
+                self.consume(Token::RightParen)?;
+                return Ok(AstNode::Call {
+                    id: Box::new(AstNode::Identifier(s)),
+                    args: Box::new(args),
+                });
+            } else {
+                return Ok(AstNode::Identifier(s));
+            }
         }
 
         self.position -= 1;
@@ -372,13 +381,27 @@ impl Parser {
             return Ok(Type::Number);
         }
 
+        if let Token::VoidType = self.next_token()? {
+            return Ok(Type::Void);
+        }
+
         self.position -= 1;
 
         Err(Error::UnexpectedToken)
     }
 
+    pub fn identifier(&mut self) -> Result<AstNode, Error> {
+        if let Token::Identifier(s) = self.next_token()? {
+            return Ok(AstNode::Identifier(s));
+        } else {
+            self.position -= 1;
+        }
+
+        Err(Error::UnexpectedToken)
+    }
+
     pub fn param(&mut self) -> Result<AstNode, Error> {
-        let param = self.primary()?;
+        let param = self.identifier()?;
         self.consume(Token::Colon)?;
         let ty = self.ty()?;
         Ok(AstNode::Parameter(Box::new(param), ty))

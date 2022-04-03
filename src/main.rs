@@ -43,6 +43,7 @@ fn main() {
         println!("{}: Compiling source code", "[INFO]".green());
         let ast = parser.parse();
         if let Ok(ast) = ast.clone() {
+            println!("AST: {:?}", ast);
             compiler.compile(ast);
         }
 

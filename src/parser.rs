@@ -1,9 +1,9 @@
-use std::fmt::Display;
+use std::{fmt::Display, fs};
 
 use colored::Colorize;
 use inkwell::{
     context::Context,
-    types::{BasicMetadataTypeEnum, FunctionType},
+    types::{BasicMetadataTypeEnum, BasicTypeEnum, FunctionType},
     AddressSpace,
 };
 
@@ -75,11 +75,12 @@ pub enum Type {
     U8,
     Char,
     CharPtr,
+    Bool,
     Void,
 }
 
 impl Type {
-    pub fn to_type<'ctx>(&self, context: &'ctx Context) -> Option<BasicMetadataTypeEnum<'ctx>> {
+    pub fn to_type<'ctx>(&self, context: &'ctx Context) -> Option<BasicTypeEnum<'ctx>> {
         match self {
             Type::F64 => Some(context.f64_type().into()),
             Type::F32 => Some(context.f32_type().into()),
@@ -94,6 +95,7 @@ impl Type {
             Type::Char => Some(context.i8_type().into()),
             Type::CharPtr => Some(context.i8_type().ptr_type(AddressSpace::Generic).into()),
             Type::Void => None,
+            Type::Bool => Some(context.i8_type().into()),
         }
     }
 
@@ -114,6 +116,7 @@ impl Type {
             Type::U16 => context.i16_type().fn_type(params, false),
             Type::U8 => context.i8_type().fn_type(params, false),
             Type::Void => context.void_type().fn_type(params, false),
+            Type::Bool => context.i8_type().fn_type(params, false),
             Type::Char => context.i8_type().fn_type(params, false),
             Type::CharPtr => context
                 .i8_type()
@@ -168,9 +171,20 @@ pub enum Statement {
         block: Option<Box<Statement>>,
         ret_type: Type,
     },
+    Asm {
+        id: String,
+        parameters: Vec<Parameter>,
+        asm: String,
+        ret_type: Type,
+    },
     Block(Vec<Statement>),
     Ret(Expression),
     Use(String),
+    If {
+        expr: Expression,
+        block: Box<Statement>,
+        el: Option<Box<Statement>>,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -192,6 +206,7 @@ pub enum Expression {
         parameters: Vec<Expression>,
         ret_type: Type,
     },
+    Char(char),
     String(String),
 }
 
@@ -224,6 +239,7 @@ pub struct Function {
     pub ret_type: Type,
 }
 
+#[derive(Debug, Clone)]
 pub struct Variable {
     pub name: String,
     pub ty: Type,
@@ -328,8 +344,24 @@ impl Parser {
     pub fn evaluate_expr_type(&mut self, expr: Expression) -> Result<Type, Error> {
         match expr {
             Expression::BinaryExpr { lhs, op, rhs } => {
+                match op.token() {
+                    lexer::Token::Greater => return Ok(Type::Bool),
+                    lexer::Token::Less => return Ok(Type::Bool),
+                    lexer::Token::Equal => return Ok(Type::Bool),
+                    lexer::Token::NotEqual => return Ok(Type::Bool),
+                    _ => (),
+                }
+
                 let lhs = self.evaluate_expr_type(*lhs)?;
                 let rhs = self.evaluate_expr_type(*rhs)?;
+
+                if let Type::CharPtr = rhs {
+                    return Ok(rhs);
+                }
+
+                if let Type::CharPtr = lhs {
+                    return Ok(lhs);
+                }
 
                 if lhs == rhs {
                     return Ok(lhs);
@@ -341,7 +373,15 @@ impl Parser {
                     at: op.position(),
                 })
             }
-            Expression::UnaryExpr { op: _, rhs } => self.evaluate_expr_type(*rhs),
+            Expression::UnaryExpr { op, rhs } => {
+                if let lexer::Token::And = op.token() {
+                    if let Ok(Type::Char) = self.evaluate_expr_type(*rhs.clone()) {
+                        return Ok(Type::CharPtr);
+                    }
+                }
+
+                self.evaluate_expr_type(*rhs)
+            }
             Expression::Number(n) => Ok(n.get_type()),
             Expression::Identifier(name) => {
                 for var in self.current_scope.iter() {
@@ -360,7 +400,8 @@ impl Parser {
                 parameters: _,
                 ret_type,
             } => Ok(ret_type),
-            Expression::String(_) => todo!(),
+            Expression::String(_) => Ok(Type::CharPtr),
+            Expression::Char(_) => Ok(Type::Char),
         }
     }
 
@@ -381,7 +422,42 @@ impl Parser {
             return self.use_statement();
         }
 
+        if let Ok(_) = self.expect(vec![lexer::Token::Asm]) {
+            return self.asm_statement();
+        }
+
+        if let Ok(_) = self.expect(vec![lexer::Token::If]) {
+            return self.if_statement();
+        }
+
         self.expr_statement()
+    }
+
+    pub fn if_statement(&mut self) -> Result<Statement, Error> {
+        let tok = self.next_token()?;
+        self.position -= 1;
+        let expr = self.expr()?;
+
+        if let Type::Bool = self.evaluate_expr_type(expr.clone())? {
+            let block = self.block()?;
+
+            let mut el = None;
+
+            if let Ok(_) = self.expect(vec![lexer::Token::Else]) {
+                el = Some(Box::new(self.block()?));
+            }
+
+            return Ok(Statement::If {
+                expr,
+                block: Box::new(block),
+                el,
+            });
+        } else {
+            return Err(Error::ParserError {
+                at: tok.position(),
+                message: "Expected Bool".to_string(),
+            });
+        }
     }
 
     pub fn use_statement(&mut self) -> Result<Statement, Error> {
@@ -431,7 +507,6 @@ impl Parser {
     }
 
     pub fn fn_statement(&mut self) -> Result<Statement, Error> {
-
         self.current_scope.clear();
 
         let id = self.identifier()?;
@@ -461,7 +536,19 @@ impl Parser {
         }
 
         for param in params.iter() {
-            self.current_scope.push(Variable { name: param.id.clone(), ty: param.ty.clone() });
+            self.current_scope.push(Variable {
+                name: param.id.clone(),
+                ty: param.ty.clone(),
+            });
+        }
+
+        if let Ok(_) = self.expect(vec![lexer::Token::SemiColon]) {
+            return Ok(Statement::Fn {
+                id,
+                parameters: params,
+                block: None,
+                ret_type,
+            });
         }
 
         let block = if let Ok(block) = self.block() {
@@ -478,9 +565,70 @@ impl Parser {
         })
     }
 
-    pub fn block(&mut self) -> Result<Statement, Error> {
+    pub fn asm_statement(&mut self) -> Result<Statement, Error> {
+        self.current_scope.clear();
+
+        let id = self.identifier()?;
+        self.consume(lexer::Token::LeftParen)?;
+
+        let param = self.param();
+
+        let params = if let Ok(param) = param {
+            let mut params = vec![param];
+
+            while let Ok(_) = self.expect(vec![lexer::Token::Comma]) {
+                params.push(self.param()?);
+            }
+
+            self.consume(lexer::Token::RightParen)?;
+
+            params
+        } else {
+            self.consume(lexer::Token::RightParen)?;
+            vec![]
+        };
+
+        let mut ret_type = Type::Void;
+
+        if let Ok(_) = self.expect(vec![lexer::Token::ReturnArrow]) {
+            ret_type = self.ty()?;
+        }
+
+        for param in params.iter() {
+            self.current_scope.push(Variable {
+                name: param.id.clone(),
+                ty: param.ty.clone(),
+            });
+        }
+
+        Ok(Statement::Asm {
+            id,
+            parameters: params,
+            asm: self.asm()?,
+            ret_type,
+        })
+    }
+
+    pub fn asm(&mut self) -> Result<String, Error> {
         self.consume(lexer::Token::LeftBracket)?;
 
+        let mut asm = String::new();
+
+        while let Err(_) = self.expect(vec![lexer::Token::RightBracket]) {
+            let tok = self.next_token()?;
+
+            if let lexer::Token::String(s) = tok.token() {
+                asm.push_str(&s);
+            } else {
+                self.position -= 1;
+            }
+        }
+
+        Ok(asm)
+    }
+
+    pub fn block(&mut self) -> Result<Statement, Error> {
+        self.consume(lexer::Token::LeftBracket)?;
 
         let mut statements = Vec::new();
 
@@ -501,6 +649,12 @@ impl Parser {
     pub fn ty(&mut self) -> Result<Type, Error> {
         let tok = self.next_token()?;
 
+        let is_ptr = if let Ok(_) = self.expect(vec![lexer::Token::Star]) {
+            true
+        } else {
+            false
+        };
+
         match tok.token() {
             lexer::Token::F64Type => Ok(Type::F64),
             lexer::Token::F32Type => Ok(Type::F32),
@@ -508,6 +662,14 @@ impl Parser {
             lexer::Token::I32Type => Ok(Type::I32),
             lexer::Token::I16Type => Ok(Type::I16),
             lexer::Token::I8Type => Ok(Type::I8),
+            lexer::Token::CharType => {
+                if is_ptr {
+                    Ok(Type::CharPtr)
+                } else {
+                    Ok(Type::Char)
+                }
+            }
+            lexer::Token::VoidType => Ok(Type::Void),
             _ => Err(Error::ParserError {
                 at: tok.position(),
                 message: format!("Expected Type but {:?} found", tok.token()),
@@ -528,7 +690,7 @@ impl Parser {
     }
 
     pub fn assignment(&mut self) -> Result<Expression, Error> {
-        let mut lhs = self.term()?;
+        let mut lhs = self.comparison()?;
 
         while let Ok(_) = self.expect(vec![lexer::Token::Assign]) {
             let operator = self.previous()?;
@@ -539,6 +701,28 @@ impl Parser {
                 op: operator,
                 rhs: Box::new(rhs),
             }
+        }
+
+        Ok(lhs)
+    }
+
+    pub fn comparison(&mut self) -> Result<Expression, Error> {
+        let mut lhs = self.term()?;
+
+        if let Ok(_) = self.expect(vec![
+            lexer::Token::Greater,
+            lexer::Token::Less,
+            lexer::Token::NotEqual,
+            lexer::Token::Equal,
+        ]) {
+            let operator = self.previous()?;
+
+            let rhs = self.factor()?;
+            lhs = Expression::BinaryExpr {
+                lhs: Box::new(lhs),
+                op: operator,
+                rhs: Box::new(rhs),
+            };
         }
 
         Ok(lhs)
@@ -578,7 +762,7 @@ impl Parser {
     }
 
     pub fn unary(&mut self) -> Result<Expression, Error> {
-        if let Ok(_) = self.expect(vec![lexer::Token::Minus]) {
+        if let Ok(_) = self.expect(vec![lexer::Token::Minus, lexer::Token::And]) {
             let op = self.previous()?;
             let rhs = self.unary()?;
 
@@ -622,6 +806,12 @@ impl Parser {
 
             self.consume(lexer::Token::RightParen)?;
 
+            println!("{:?}", self.current_scope);
+            println!(
+                "{:?}",
+                self.evaluate_expr_type(args.get(0).unwrap().clone())
+            );
+
             Ok(args)
         } else {
             self.consume(lexer::Token::RightParen)?;
@@ -631,7 +821,6 @@ impl Parser {
     }
 
     pub fn primary(&mut self) -> Result<Expression, Error> {
-        println!("Primary");
         if let lexer::Token::Float(n) = self.next_token()?.token() {
             if let Ok(_) = self.expect(vec![lexer::Token::F32Type]) {
                 return Ok(Expression::Number(Number::F32(n as f32)));
@@ -663,6 +852,12 @@ impl Parser {
 
         self.position -= 1;
 
+        if let lexer::Token::Char(c) = self.next_token()?.token() {
+            return Ok(Expression::Char(c));
+        }
+
+        self.position -= 1;
+
         if let lexer::Token::String(s) = self.next_token()?.token() {
             return Ok(Expression::String(s));
         }
@@ -681,10 +876,7 @@ impl Parser {
         if let lexer::Token::Identifier(s) = tok.token() {
             if let Ok(_) = self.expect(vec![lexer::Token::LeftParen]) {
                 self.position -= 1;
-                println!("Args1");
                 let args = self.arguments()?;
-
-                println!("Args");
 
                 let mut function = None;
                 for fun in self.functions.clone() {
@@ -741,10 +933,8 @@ impl Parser {
         })
     }
 
-    pub fn parse(&mut self) -> Result<Vec<Statement>, Error> {
-        let mut statements = Vec::new();
-
-        // Define functions first
+    pub fn process_functions(&mut self) -> Result<Vec<Function>, Error> {
+        let mut functions = Vec::new();
         while let Ok(tok) = self.next_token() {
             if let lexer::Token::Fn = tok.token() {
                 let id = self.identifier()?;
@@ -773,7 +963,41 @@ impl Parser {
                     ret_type = self.ty()?;
                 }
 
-                self.functions.push(Function {
+                functions.push(Function {
+                    parameters: params.clone(),
+                    id: id.clone(),
+                    ret_type: ret_type.clone(),
+                });
+            }
+
+            if let lexer::Token::Asm = tok.token() {
+                let id = self.identifier()?;
+                self.consume(lexer::Token::LeftParen)?;
+
+                let param = self.param();
+
+                let params = if let Ok(param) = param {
+                    let mut params = vec![param];
+
+                    while let Ok(_) = self.expect(vec![lexer::Token::Comma]) {
+                        params.push(self.param()?);
+                    }
+
+                    self.consume(lexer::Token::RightParen)?;
+
+                    params
+                } else {
+                    self.consume(lexer::Token::RightParen)?;
+                    vec![]
+                };
+
+                let mut ret_type = Type::Void;
+
+                if let Ok(_) = self.expect(vec![lexer::Token::ReturnArrow]) {
+                    ret_type = self.ty()?;
+                }
+
+                functions.push(Function {
                     parameters: params.clone(),
                     id: id.clone(),
                     ret_type: ret_type.clone(),
@@ -782,6 +1006,38 @@ impl Parser {
         }
 
         self.position = 0;
+
+        Ok(functions)
+    }
+
+    pub fn parse(&mut self) -> Result<Vec<Statement>, Error> {
+        let mut statements = Vec::new();
+
+        // Define functions first
+        while let Ok(tok) = self.next_token() {
+            if let lexer::Token::Use = tok.token() {
+                if let lexer::Token::String(file) = self.next_token()?.token() {
+                    let source = fs::read_to_string(file).unwrap();
+                    let mut lexer = Lexer::new(&source);
+                    let mut parser = Parser::new(&mut lexer);
+                    let mut functions = parser.process_functions()?;
+                    self.functions.append(&mut functions);
+                } else {
+                    return Err(Error::ParserError {
+                        at: tok.position(),
+                        message: format!("Expected String but found {:?}", tok.token()),
+                    });
+                }
+            }
+        }
+
+        self.position = 0;
+
+        let mut funcs = self.process_functions()?;
+
+        self.functions.append(&mut funcs);
+
+        println!("{:?}", self.functions);
 
         loop {
             if self.position == self.tokens.len() {

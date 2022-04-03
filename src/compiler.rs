@@ -4,10 +4,12 @@ use inkwell::{
     builder::Builder,
     context::Context,
     module::Module,
+    types::BasicMetadataTypeEnum,
     values::{
-        BasicMetadataValueEnum, BasicValue, FloatValue, FunctionValue, IntValue, PointerValue,
+        BasicMetadataValueEnum, BasicValue, CallableValue, FloatValue, FunctionValue, IntValue,
+        PointerValue,
     },
-    AddressSpace,
+    AddressSpace, FloatPredicate, InlineAsmDialect, IntPredicate,
 };
 
 use crate::{
@@ -19,7 +21,9 @@ use crate::{
 pub enum Value<'a> {
     Float(FloatValue<'a>),
     Int(IntValue<'a>),
+    Pointer(PointerValue<'a>),
     Function(FunctionValue<'a>, HashMap<String, PointerValue<'a>>),
+    Global(PointerValue<'a>),
     None,
 }
 
@@ -33,6 +37,7 @@ pub struct Compiler<'a, 'ctx> {
     pub builder: &'a Builder<'ctx>,
     pub module: &'a Module<'ctx>,
     pub variables: HashMap<String, Variable<'ctx>>,
+    pub callables: HashMap<String, PointerValue<'ctx>>,
 }
 
 impl<'a, 'ctx> Compiler<'a, 'ctx> {
@@ -46,6 +51,7 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
             context,
             module,
             variables: HashMap::new(),
+            callables: HashMap::new(),
         }
     }
 
@@ -82,10 +88,10 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
                 ret_type,
             } => {
                 self.variables.clear();
-                let mut pars = Vec::new();
+                let mut pars: Vec<BasicMetadataTypeEnum> = Vec::new();
                 for par in parameters.iter() {
                     if let Some(t) = par.ty.to_type(self.context) {
-                        pars.push(t);
+                        pars.push(t.into());
                     }
                 }
                 let function = self.module.add_function(
@@ -119,59 +125,69 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
                         );
                     }
 
+                    let mut ret = false;
+
                     for stmt in block.iter() {
+                        if let Statement::Ret(_) = stmt {
+                            ret = true;
+                        }
                         self.compile_statement(stmt.clone())?;
                     }
+
+                    if !ret {
+                        self.builder.build_return(None);
+                    }
                 }
+            }
+            Statement::Asm {
+                id,
+                parameters,
+                asm,
+                ret_type,
+            } => {
+                self.variables.clear();
+                let mut pars: Vec<BasicMetadataTypeEnum> = Vec::new();
+                for par in parameters.iter() {
+                    if let Some(t) = par.ty.to_type(self.context) {
+                        pars.push(t.into());
+                    }
+                }
+
+                let mut regs = String::from("=r");
+
+                for par in parameters.iter() {
+                    regs.push_str(&format!(",{{{}}}", par.id))
+                }
+
+                let function = self.context.create_inline_asm(
+                    ret_type.to_function_type(self.context, pars.as_slice()),
+                    asm,
+                    regs,
+                    true,
+                    false,
+                    Some(InlineAsmDialect::Intel),
+                    false,
+                );
+
+                self.callables.insert(id, function);
             }
             Statement::Expr(expr) => match self.compile_expr(expr)? {
                 _ => (),
             },
             Statement::Let { name, expr, ty } => {
-                let alloca = match ty {
-                    crate::parser::Type::F64 => {
-                        self.builder.build_alloca(self.context.f64_type(), &name)
-                    }
-                    crate::parser::Type::F32 => {
-                        self.builder.build_alloca(self.context.f32_type(), &name)
-                    }
-                    crate::parser::Type::I64 => {
-                        self.builder.build_alloca(self.context.i64_type(), &name)
-                    }
-                    crate::parser::Type::I32 => {
-                        self.builder.build_alloca(self.context.i32_type(), &name)
-                    }
-                    crate::parser::Type::I16 => {
-                        self.builder.build_alloca(self.context.i16_type(), &name)
-                    }
-                    crate::parser::Type::I8 => {
-                        self.builder.build_alloca(self.context.i8_type(), &name)
-                    }
-                    crate::parser::Type::U64 => {
-                        self.builder.build_alloca(self.context.i64_type(), &name)
-                    }
-                    crate::parser::Type::U32 => {
-                        self.builder.build_alloca(self.context.i32_type(), &name)
-                    }
-                    crate::parser::Type::U16 => {
-                        self.builder.build_alloca(self.context.i16_type(), &name)
-                    }
-                    crate::parser::Type::U8 => {
-                        self.builder.build_alloca(self.context.i8_type(), &name)
-                    }
-                    crate::parser::Type::Char => {
-                        self.builder.build_alloca(self.context.i8_type(), &name)
-                    }
-                    crate::parser::Type::CharPtr => self.builder.build_alloca(
-                        self.context.i8_type().ptr_type(AddressSpace::Generic),
-                        &name,
-                    ),
-                    crate::parser::Type::Void => todo!(),
+                let expr = self.compile_expr(expr)?;
+
+                let alloca = match expr {
+                    Value::Float(f) => self.builder.build_alloca(f.get_type(), &name),
+                    Value::Int(i) => self.builder.build_alloca(i.get_type(), &name),
+                    Value::Pointer(p) => self.builder.build_alloca(p.get_type(), &name),
+                    Value::Function(_, _) => todo!(),
+                    Value::None => todo!(),
+                    Value::Global(p) => self.builder.build_alloca(p.get_type(), &name),
                 };
+
                 self.variables
                     .insert(name.clone(), Variable { ty, ptr: alloca });
-
-                let expr = self.compile_expr(expr)?;
 
                 match expr {
                     Value::Float(f) => {
@@ -184,6 +200,42 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
                     }
                     Value::Function(_, _) => todo!(),
                     Value::None => todo!(),
+                    Value::Pointer(p) => {
+                        self.builder
+                            .build_store(self.variables.get(name.as_str()).unwrap().ptr, p);
+                    }
+                    Value::Global(_) => (),
+                }
+            }
+            Statement::If { expr, block, el } => {
+                let expr = self.compile_expr(expr)?;
+
+                if let Value::Int(i) = expr {
+                    let cond = self.builder.build_int_compare(IntPredicate::NE, i, self.context.bool_type().const_int(0, true), "cond");
+                    let function = self.builder.get_insert_block().unwrap().get_parent().unwrap();
+
+                    let then = self.context.append_basic_block(function, "then");
+                    let els = self.context.append_basic_block(function, "else");
+                    let merge = self.context.append_basic_block(function, "ifcont");
+
+                    self.builder.build_conditional_branch(cond, then, els);
+
+                    self.builder.position_at_end(then);
+
+                    self.compile_statement(*block)?;
+
+                    self.builder.build_unconditional_branch(merge);
+
+                    self.builder.position_at_end(els);
+
+                    if let Some(st) = el {
+                        self.compile_statement(*st)?;
+                    }
+
+                    self.builder.build_unconditional_branch(merge);
+
+                    self.builder.position_at_end(merge);
+
                 }
             }
             Statement::Ret(expr) => match self.compile_expr(expr)? {
@@ -195,6 +247,17 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
                 }
                 Value::Function(_, _) => todo!(),
                 Value::None => todo!(),
+                Value::Pointer(val) => {
+                    self.builder.build_return(Some(&val));
+                }
+                Value::Global(val) => {
+                    self.builder.build_return(Some(&val));
+                }
+            },
+            Statement::Block(bl) => {
+                for st in bl.iter() {
+                    self.compile_statement(st.clone())?;
+                }
             },
             _ => (),
         }
@@ -236,6 +299,15 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
                     self.context.i8_type().const_int(n as u64, false),
                 )),
             },
+            Expression::String(s) => {
+                let glob = self.module.add_global(
+                    self.context.i8_type().array_type((s.len() + 1) as u32),
+                    Some(AddressSpace::Const),
+                    "str",
+                );
+                glob.set_initializer(&self.context.const_string(s.as_bytes(), true));
+                Ok(Value::Pointer(glob.as_pointer_value()))
+            }
             Expression::BinaryExpr { lhs, op, rhs } => {
                 let rhs = self.compile_expr(*rhs)?;
                 if let Expression::Identifier(id) = *lhs.clone() {
@@ -251,6 +323,14 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
                             }
                             Value::Function(_, _) => todo!(),
                             Value::None => todo!(),
+                            Value::Pointer(p) => {
+                                self.builder
+                                    .build_store(self.variables.get(id.as_str()).unwrap().ptr, p);
+                            }
+                            Value::Global(p) => {
+                                self.builder
+                                    .build_store(self.variables.get(id.as_str()).unwrap().ptr, p);
+                            }
                         }
                     }
                 }
@@ -258,6 +338,114 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
                 let lhs = self.compile_expr(*lhs)?;
 
                 match op.token() {
+                    crate::lexer::Token::Greater => match lhs {
+                        Value::Float(f) => {
+                            if let Value::Float(f1) = rhs {
+                                return Ok(Value::Int(
+                                    self.builder
+                                        .build_float_compare(FloatPredicate::OGT, f, f1, "tmpcmp")
+                                        .as_basic_value_enum()
+                                        .into_int_value(),
+                                ));
+                            } else {
+                                return Ok(Value::None);
+                            }
+                        }
+                        Value::Int(i) => {
+                            if let Value::Int(i1) = rhs {
+                                return Ok(Value::Int(
+                                    self.builder
+                                        .build_int_compare(IntPredicate::SGT, i, i1, "tmpcmp")
+                                        .as_basic_value_enum()
+                                        .into_int_value(),
+                                ));
+                            } else {
+                                return Ok(Value::None)
+                            }
+                        }
+                        _ => return Ok(Value::None),
+                    },
+                    crate::lexer::Token::Less => match lhs {
+                        Value::Float(f) => {
+                            if let Value::Float(f1) = rhs {
+                                return Ok(Value::Int(
+                                    self.builder
+                                        .build_float_compare(FloatPredicate::OLT, f, f1, "tmpcmp")
+                                        .as_basic_value_enum()
+                                        .into_int_value(),
+                                ));
+                            } else {
+                                return Ok(Value::None);
+                            }
+                        }
+                        Value::Int(i) => {
+                            if let Value::Int(i1) = rhs {
+                                return Ok(Value::Int(
+                                    self.builder
+                                        .build_int_compare(IntPredicate::SLT, i, i1, "tmpcmp")
+                                        .as_basic_value_enum()
+                                        .into_int_value(),
+                                ));
+                            } else {
+                                return Ok(Value::None)
+                            }
+                        }
+                        _ => return Ok(Value::None),
+                    },
+                    crate::lexer::Token::Equal => match lhs {
+                        Value::Float(f) => {
+                            if let Value::Float(f1) = rhs {
+                                return Ok(Value::Int(
+                                    self.builder
+                                        .build_float_compare(FloatPredicate::OEQ, f, f1, "tmpcmp")
+                                        .as_basic_value_enum()
+                                        .into_int_value(),
+                                ));
+                            } else {
+                                return Ok(Value::None);
+                            }
+                        }
+                        Value::Int(i) => {
+                            if let Value::Int(i1) = rhs {
+                                return Ok(Value::Int(
+                                    self.builder
+                                        .build_int_compare(IntPredicate::EQ, i, i1, "tmpcmp")
+                                        .as_basic_value_enum()
+                                        .into_int_value(),
+                                ));
+                            } else {
+                                return Ok(Value::None)
+                            }
+                        }
+                        _ => return Ok(Value::None),
+                    },
+                    crate::lexer::Token::NotEqual => match lhs {
+                        Value::Float(f) => {
+                            if let Value::Float(f1) = rhs {
+                                return Ok(Value::Int(
+                                    self.builder
+                                        .build_float_compare(FloatPredicate::ONE, f, f1, "tmpcmp")
+                                        .as_basic_value_enum()
+                                        .into_int_value(),
+                                ));
+                            } else {
+                                return Ok(Value::None);
+                            }
+                        }
+                        Value::Int(i) => {
+                            if let Value::Int(i1) = rhs {
+                                return Ok(Value::Int(
+                                    self.builder
+                                        .build_int_compare(IntPredicate::NE, i, i1, "tmpcmp")
+                                        .as_basic_value_enum()
+                                        .into_int_value(),
+                                ));
+                            } else {
+                                return Ok(Value::None)
+                            }
+                        }
+                        _ => return Ok(Value::None),
+                    },
                     crate::lexer::Token::Plus => match lhs {
                         Value::Float(f) => {
                             if let Value::Float(f1) = rhs {
@@ -277,6 +465,25 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
                         }
                         Value::Function(_, _) => Ok(Value::None),
                         Value::None => Ok(Value::None),
+                        Value::Pointer(p) => {
+                            if let Value::Int(i) = rhs {
+                                let p1 = self.builder.build_ptr_to_int(p, self.context.i64_type(), "tmp");
+                                let p1 = self.builder.build_int_add(p1, i, "tmpadd");
+                                let sum = self.builder.build_int_to_ptr(p1, p.get_type(), "tmpptr");
+                                return Ok(Value::Pointer(sum));
+                            }
+
+                            Ok(Value::None)
+                        }
+                        Value::Global(p) => {
+                            if let Value::Int(i) = rhs {
+                                let p1 = self.builder.build_ptr_to_int(p, i.get_type(), "tmp");
+                                let sum = self.builder.build_int_to_ptr(p1, p.get_type(), "tmpptr");
+                                return Ok(Value::Pointer(sum));
+                            }
+
+                            Ok(Value::None)
+                        }
                     },
                     crate::lexer::Token::Minus => Ok(Value::None),
                     crate::lexer::Token::Star => Ok(Value::None),
@@ -284,6 +491,7 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
                     _ => Ok(Value::None),
                 }
             }
+            Expression::Char(c) => Ok(Value::Int(self.context.i8_type().const_int(c as u64, true))),
             Expression::Grouping(expr) => self.compile_expr(*expr),
             Expression::Identifier(id) => match self.variables.get(&id).unwrap().ty {
                 Type::F64 => Ok(Value::Float(
@@ -341,12 +549,26 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
                         .build_load(self.variables.get(id.as_str()).unwrap().ptr, id.as_str())
                         .into_int_value(),
                 )),
-                Type::CharPtr => Ok(Value::Int(
+                Type::CharPtr => Ok(Value::Pointer(
+                    self.builder.build_int_to_ptr(
+                        self.builder.build_ptr_to_int(
+                            self.builder
+                                .build_load(self.variables.get(id.as_str()).unwrap().ptr, "tmpload")
+                                .into_pointer_value(),
+                            self.context.i64_type(),
+                            "tmpcast",
+                        ),
+                        self.context.i8_type().ptr_type(AddressSpace::Generic),
+                        "tmpcast",
+                    ),
+                )),
+
+                Type::Void => todo!(),
+                Type::Bool => Ok(Value::Int(
                     self.builder
                         .build_load(self.variables.get(id.as_str()).unwrap().ptr, id.as_str())
                         .into_int_value(),
                 )),
-                Type::Void => todo!(),
             },
             Expression::Call {
                 id,
@@ -368,8 +590,19 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
                         Value::Int(i) => i.clone().into(),
                         Value::Function(_, _) => todo!(),
                         Value::None => todo!(),
+                        Value::Pointer(p) => p.clone().into(),
+                        Value::Global(p) => p.clone().into(),
                     })
                     .collect();
+
+                if let Some(c) = self.callables.get(&id) {
+                    self.builder.build_call(
+                        CallableValue::try_from(c.clone()).unwrap(),
+                        argsv.as_slice(),
+                        "tmp",
+                    );
+                    return Ok(Value::None);
+                }
 
                 match self
                     .builder
@@ -385,7 +618,7 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
                 {
                     Some(value) => match value {
                         inkwell::values::BasicValueEnum::ArrayValue(_) => todo!(),
-                        inkwell::values::BasicValueEnum::IntValue(_) => todo!(),
+                        inkwell::values::BasicValueEnum::IntValue(i) => return Ok(Value::Int(i)),
                         inkwell::values::BasicValueEnum::FloatValue(f) => {
                             return Ok(Value::Float(f))
                         }
@@ -393,10 +626,21 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
                         inkwell::values::BasicValueEnum::StructValue(_) => todo!(),
                         inkwell::values::BasicValueEnum::VectorValue(_) => todo!(),
                     },
-                    None => todo!(),
+                    None => return Ok(Value::None),
                 }
             }
-            _ => Ok(Value::None),
+            Expression::UnaryExpr { op, rhs } => match op.token() {
+                lexer::Token::And => {
+                    if let Expression::Identifier(id) = *rhs {
+                        if let Some(var) = self.variables.get(&id) {
+                            return Ok(Value::Pointer(var.ptr));
+                        }
+                    }
+
+                    Ok(Value::None)
+                }
+                _ => Ok(Value::None),
+            },
         }
     }
 }

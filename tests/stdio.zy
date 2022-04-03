@@ -1,0 +1,14 @@
+asm exit(rdi: i32) -> i32 {
+    "mov rax, 60
+    syscall"
+}
+
+asm write(rsi: char*, rdx: i32) -> i32 {
+    "mov rax, 1
+    mov rdi, 0
+    syscall"
+}
+
+fn print(s: char*, len: i32) -> void {
+    write(s, len);
+}

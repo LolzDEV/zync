@@ -1,0 +1,1 @@
+fn print(s: char*, len: i32) -> void;

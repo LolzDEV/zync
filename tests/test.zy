@@ -1,8 +1,18 @@
-fn main(a: i32, b: i64) -> i64 {
-    let c = add_one() + 1;
-    ret c;
-}
+use "stdio.zh";
 
-fn add_one(number: i64) -> i64 {
-    ret number + 1i64;
+fn main(a: i32, b: i64) -> i64 {
+    let s = "hello";
+    let ss = "helloo\n";
+
+    let sss = ss+1i64;
+
+    let a = 2;
+
+    if a == 1 {
+        print(s+1i64, 4);
+    } else {
+        print(ss, 7);
+    }
+
+    ret 0i64;
 }

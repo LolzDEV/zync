@@ -10,9 +10,11 @@ pub enum Token {
     Minus,
     Star,
     Slash,
+    And,
     SemiColon,
     Identifier(String),
     String(String),
+    Char(char),
     LeftParen,
     RightParen,
     Assign,
@@ -20,6 +22,7 @@ pub enum Token {
     RightBracket,
     Let,
     Fn,
+    Asm,
     ReturnArrow,
     Comma,
     Colon,
@@ -30,9 +33,19 @@ pub enum Token {
     I32Type,
     I16Type,
     I8Type,
+    CharType,
     StringType,
     VoidType,
     Use,
+    If,
+    Else,
+    Greater,
+    Less,
+    Equal,
+    NotEqual,
+    True,
+    False,
+    Not,
     Eof,
 }
 
@@ -83,6 +96,8 @@ impl Lexer {
         let mut is_identifier = false;
         let mut current_string = String::new();
         let mut is_string = false;
+        let mut current_char = ' ';
+        let mut is_char = false;
         let mut pos = FilePosition { line: 0, column: 0 };
 
         for line in self.source.lines().into_iter().skip(self.current_line) {
@@ -94,38 +109,68 @@ impl Lexer {
 
                 self.current += 1;
 
-                match c {
-                    '+' => return (Token::Plus, pos),
-                    '-' => {
-                        if self.match_char('>') {
-                            self.current += 1;
-                            return (Token::ReturnArrow, pos);
-                        } else {
-                            return (Token::Minus, pos);
-                        }
+                if c == '"' {
+                    if is_string {
+                        return (Token::String(current_string), pos);
+                    } else {
+                        is_string = true;
+                        continue;
                     }
-                    '*' => return (Token::Star, pos),
-                    '/' => return (Token::Slash, pos),
-                    ';' => return (Token::SemiColon, pos),
-                    '=' => return (Token::Assign, pos),
-                    '(' => return (Token::LeftParen, pos),
-                    ')' => return (Token::RightParen, pos),
-                    '{' => return (Token::LeftBracket, pos),
-                    '}' => return (Token::RightBracket, pos),
-                    ',' => return (Token::Comma, pos),
-                    ':' => return (Token::Colon, pos),
-                    '"' => {
-                        if is_string {
-                            return (Token::String(current_string), pos);
-                        } else {
-                            is_string = true;
-                            continue;
-                        }
-                    }
-                    _ => (),
                 }
 
-                if c.is_ascii_alphanumeric() && !is_string {
+                if c == '\'' {
+                    if is_char {
+                        return (Token::Char(current_char), pos);
+                    } else {
+                        is_char = true;
+                        continue;
+                    }
+                }
+
+                if !is_string && !is_char {
+                    match c {
+                        '+' => return (Token::Plus, pos),
+                        '-' => {
+                            if self.match_char('>') {
+                                self.current += 1;
+                                return (Token::ReturnArrow, pos);
+                            } else {
+                                return (Token::Minus, pos);
+                            }
+                        }
+                        '*' => return (Token::Star, pos),
+                        '/' => return (Token::Slash, pos),
+                        ';' => return (Token::SemiColon, pos),
+                        '=' => {
+                            if self.match_char('=') {
+                                self.current += 1;
+                                return (Token::Equal, pos);
+                            } else {
+                                return (Token::Assign, pos);
+                            }
+                        }
+                        '(' => return (Token::LeftParen, pos),
+                        ')' => return (Token::RightParen, pos),
+                        '{' => return (Token::LeftBracket, pos),
+                        '}' => return (Token::RightBracket, pos),
+                        ',' => return (Token::Comma, pos),
+                        ':' => return (Token::Colon, pos),
+                        '&' => return (Token::And, pos),
+                        '!' => {
+                            if self.match_char('=') {
+                                self.current += 1;
+                                return (Token::NotEqual, pos);
+                            } else {
+                                return (Token::Not, pos);
+                            }
+                        }
+                        '>' => return (Token::Greater, pos),
+                        '<' => return (Token::Less, pos),
+                        _ => (),
+                    }
+                }
+
+                if c.is_ascii_alphanumeric() && !is_string && !is_char {
                     if (c.is_ascii_digit() && is_identifier)
                         || (!c.is_ascii_digit() && is_identifier)
                         || (!c.is_ascii_digit() && !is_identifier)
@@ -151,16 +196,22 @@ impl Lexer {
                             match current_identifier.as_str() {
                                 "let" => return (Token::Let, pos),
                                 "fn" => return (Token::Fn, pos),
+                                "asm" => return (Token::Asm, pos),
                                 "f64" => return (Token::F64Type, pos),
                                 "f32" => return (Token::F32Type, pos),
                                 "i64" => return (Token::I64Type, pos),
                                 "i32" => return (Token::I32Type, pos),
                                 "i16" => return (Token::I16Type, pos),
                                 "i8" => return (Token::I8Type, pos),
+                                "char" => return (Token::CharType, pos),
                                 "string" => return (Token::StringType, pos),
                                 "void" => return (Token::VoidType, pos),
                                 "ret" => return (Token::Ret, pos),
                                 "use" => return (Token::Use, pos),
+                                "if" => return (Token::If, pos),
+                                "else" => return (Token::Else, pos),
+                                "true" => return (Token::True, pos),
+                                "false" => return (Token::False, pos),
                                 _ => {
                                     return (Token::Identifier(current_identifier), pos);
                                 }
@@ -170,7 +221,19 @@ impl Lexer {
                 }
 
                 if is_string {
+                    if c == '\\' {
+                        if self.match_char('n') {
+                            current_string.push('\n');
+                            self.current += 1;
+                            continue;
+                        }
+                    }
                     current_string.push(c);
+                    continue;
+                }
+
+                if is_char {
+                    current_char = c;
                     continue;
                 }
 
@@ -220,6 +283,10 @@ impl Lexer {
                         }
                     }
                 }
+            }
+
+            if is_string {
+                current_string.push('\n');
             }
 
             self.current = 0;

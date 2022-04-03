@@ -1,7 +1,8 @@
-fn test(b: number) -> number;
+fn main(a: i32, b: i64) -> i64 {
+    let c = add_one() + 1;
+    ret c;
+}
 
-fn main() -> number {
-    let b = test(1) + 1;
-
-    ret 1;
+fn add_one(number: i64) -> i64 {
+    ret number + 1i64;
 }

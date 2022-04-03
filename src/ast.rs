@@ -1,6 +1,7 @@
 use inkwell::{
     context::Context,
     types::{BasicMetadataTypeEnum, FunctionType},
+    AddressSpace,
 };
 
 use crate::lexer::{FilePosition, Lexer, Token};
@@ -17,6 +18,8 @@ pub enum Op {
 #[derive(Debug, Clone)]
 pub enum Type {
     Number,
+    NumberPtr,
+    String,
     Void,
 }
 
@@ -29,6 +32,14 @@ impl Type {
         match self {
             Type::Number => context.f64_type().fn_type(params, false),
             Type::Void => context.void_type().fn_type(params, false),
+            Type::String => context
+                .i8_type()
+                .ptr_type(AddressSpace::Const)
+                .fn_type(params, false),
+            Type::NumberPtr => context
+                .f64_type()
+                .ptr_type(AddressSpace::Generic)
+                .fn_type(params, false),
         }
     }
 
@@ -36,6 +47,8 @@ impl Type {
         match self {
             Type::Number => Some(context.f64_type().into()),
             Type::Void => None,
+            Type::String => Some(context.i8_type().ptr_type(AddressSpace::Const).into()),
+            Type::NumberPtr => Some(context.f64_type().ptr_type(AddressSpace::Generic).into()),
         }
     }
 }
@@ -63,6 +76,8 @@ pub enum AstNode {
         parameters: Box<AstNode>,
         block: Box<AstNode>,
     },
+    UseStatement(String),
+    String(String),
     RetStatement(Box<AstNode>),
     Block(Vec<AstNode>),
     Parameter(Box<AstNode>, Type),
@@ -181,7 +196,20 @@ impl Parser {
             return self.ret_statement();
         }
 
+        if let Ok(_) = self.expect(vec![Token::Use]) {
+            return self.use_statment();
+        }
+
         self.expr_statement()
+    }
+
+    pub fn use_statment(&mut self) -> Result<AstNode, Error> {
+        if let AstNode::String(s) = self.primary()? {
+            self.consume(Token::SemiColon)?;
+            return Ok(AstNode::UseStatement(s));
+        }
+
+        Err(Error::UnexpectedToken)
     }
 
     pub fn ret_statement(&mut self) -> Result<AstNode, Error> {
@@ -338,6 +366,12 @@ impl Parser {
 
         self.position -= 1;
 
+        if let Token::String(s) = self.next_token()? {
+            return Ok(AstNode::String(s));
+        }
+
+        self.position -= 1;
+
         if let Token::Identifier(s) = self.next_token()? {
             if let Ok(_) = self.expect(vec![Token::LeftParen]) {
                 let args = self.arguments()?;
@@ -377,7 +411,25 @@ impl Parser {
     }
 
     pub fn ty(&mut self) -> Result<Type, Error> {
+        let mut is_ptr = false;
+
+        if let Token::Star = self.next_token()? {
+            is_ptr = true;
+        } else {
+            self.position -= 1;
+        }
+
+        if let Token::StringType = self.next_token()? {
+            return Ok(Type::String);
+        }
+
+        self.position -= 1;
+
         if let Token::NumberType = self.next_token()? {
+            if is_ptr {
+                return Ok(Type::NumberPtr);
+            }
+
             return Ok(Type::Number);
         }
 

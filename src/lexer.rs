@@ -1,14 +1,18 @@
-const NOT_IDENTIFIER: [char; 13] = ['+', '-', '/', '*', '=', ';', '(', ')', '{', '}', ' ', ',', ':'];
+const NOT_IDENTIFIER: [char; 15] = [
+    '+', '-', '/', '*', '=', ';', '(', ')', '{', '}', ' ', ',', ':', '\"', '\'',
+];
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Token {
-    Number(f64),
+    Float(f64),
+    Integer(i64),
     Plus,
     Minus,
     Star,
     Slash,
     SemiColon,
     Identifier(String),
+    String(String),
     LeftParen,
     RightParen,
     Assign,
@@ -20,8 +24,15 @@ pub enum Token {
     Comma,
     Colon,
     Ret,
-    NumberType,
+    F64Type,
+    F32Type,
+    I64Type,
+    I32Type,
+    I16Type,
+    I8Type,
+    StringType,
     VoidType,
+    Use,
     Eof,
 }
 
@@ -70,19 +81,15 @@ impl Lexer {
         let mut current_number = String::new();
         let mut current_identifier = String::new();
         let mut is_identifier = false;
+        let mut current_string = String::new();
+        let mut is_string = false;
         let mut pos = FilePosition { line: 0, column: 0 };
 
-        for (l, line) in self
-            .source
-            .lines()
-            .into_iter()
-            .skip(self.current_line)
-            .enumerate()
-        {
-            for (ch, c) in line.chars().into_iter().skip(self.current).enumerate() {
+        for line in self.source.lines().into_iter().skip(self.current_line) {
+            for c in line.chars().into_iter().skip(self.current) {
                 pos = FilePosition {
-                    line: l,
-                    column: ch,
+                    line: self.current_line + 1,
+                    column: self.current + 1,
                 };
 
                 self.current += 1;
@@ -107,7 +114,64 @@ impl Lexer {
                     '}' => return (Token::RightBracket, pos),
                     ',' => return (Token::Comma, pos),
                     ':' => return (Token::Colon, pos),
+                    '"' => {
+                        if is_string {
+                            return (Token::String(current_string), pos);
+                        } else {
+                            is_string = true;
+                            continue;
+                        }
+                    }
                     _ => (),
+                }
+
+                if c.is_ascii_alphanumeric() && !is_string {
+                    if (c.is_ascii_digit() && is_identifier)
+                        || (!c.is_ascii_digit() && is_identifier)
+                        || (!c.is_ascii_digit() && !is_identifier)
+                    {
+                        if !is_identifier {
+                            is_identifier = true;
+                        }
+
+                        current_identifier.push(c);
+
+                        let next = self
+                            .source
+                            .lines()
+                            .into_iter()
+                            .nth(self.current_line)
+                            .unwrap_or(" ")
+                            .chars()
+                            .into_iter()
+                            .nth(self.current)
+                            .unwrap_or(' ');
+
+                        if NOT_IDENTIFIER.contains(&next) {
+                            match current_identifier.as_str() {
+                                "let" => return (Token::Let, pos),
+                                "fn" => return (Token::Fn, pos),
+                                "f64" => return (Token::F64Type, pos),
+                                "f32" => return (Token::F32Type, pos),
+                                "i64" => return (Token::I64Type, pos),
+                                "i32" => return (Token::I32Type, pos),
+                                "i16" => return (Token::I16Type, pos),
+                                "i8" => return (Token::I8Type, pos),
+                                "string" => return (Token::StringType, pos),
+                                "void" => return (Token::VoidType, pos),
+                                "ret" => return (Token::Ret, pos),
+                                "use" => return (Token::Use, pos),
+                                _ => {
+                                    return (Token::Identifier(current_identifier), pos);
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if is_string {
+                    current_string.push(c);
+                    continue;
                 }
 
                 if c.is_ascii_whitespace() {
@@ -115,7 +179,7 @@ impl Lexer {
                     continue;
                 }
 
-                if c.is_ascii_digit() {
+                if c.is_ascii_digit() || c == '.' {
                     if !is_number {
                         is_number = true;
                     }
@@ -133,40 +197,25 @@ impl Lexer {
                         .nth(self.current)
                         .unwrap_or('c')
                         .is_ascii_digit()
+                        && self
+                            .source
+                            .lines()
+                            .into_iter()
+                            .nth(self.current_line)
+                            .unwrap_or(" ")
+                            .chars()
+                            .into_iter()
+                            .nth(self.current)
+                            .unwrap_or('c')
+                            != '.'
                     {
-                        if let Ok(n) = current_number.parse::<f64>() {
-                            return (Token::Number(n), pos);
-                        }
-                    }
-                }
-
-                if c.is_ascii_alphanumeric() {
-                    if !is_identifier {
-                        is_identifier = true;
-                    }
-
-                    current_identifier.push(c);
-
-                    let next = self
-                        .source
-                        .lines()
-                        .into_iter()
-                        .nth(self.current_line)
-                        .unwrap_or(" ")
-                        .chars()
-                        .into_iter()
-                        .nth(self.current)
-                        .unwrap_or(' ');
-
-                    if NOT_IDENTIFIER.contains(&next) {
-                        match current_identifier.as_str() {
-                            "let" => return (Token::Let, pos),
-                            "fn" => return (Token::Fn, pos),
-                            "number" => return (Token::NumberType, pos),
-                            "void" => return (Token::VoidType, pos),
-                            "ret" => return (Token::Ret, pos), 
-                            _ => {
-                                return (Token::Identifier(current_identifier), pos);
+                        if current_number.contains('.') {
+                            if let Ok(n) = current_number.parse::<f64>() {
+                                return (Token::Float(n), pos);
+                            }
+                        } else {
+                            if let Ok(n) = current_number.parse::<i64>() {
+                                return (Token::Integer(n), pos);
                             }
                         }
                     }
@@ -178,8 +227,14 @@ impl Lexer {
         }
 
         if is_number {
-            if let Ok(n) = current_number.parse::<f64>() {
-                return (Token::Number(n), pos);
+            if current_number.contains('.') {
+                if let Ok(n) = current_number.parse::<f64>() {
+                    return (Token::Float(n), pos);
+                }
+            } else {
+                if let Ok(n) = current_number.parse::<i64>() {
+                    return (Token::Integer(n), pos);
+                }
             }
         }
 

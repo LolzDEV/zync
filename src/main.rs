@@ -4,15 +4,16 @@ use std::{
     process::{exit, Command},
 };
 
-use ast::Parser;
 use colored::Colorize;
-use compiler::Compiler;
 use inkwell::context::Context;
 use lexer::Lexer;
+use parser::Parser;
 
-pub mod ast;
+use crate::compiler::Compiler;
+
 pub mod compiler;
 pub mod lexer;
+pub mod parser;
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -29,10 +30,10 @@ fn main() {
         let module = context.create_module(file);
         let builder = context.create_builder();
 
-        //let mut lexer = Lexer::new(&source);
-        //let mut parser = Parser::new(&mut lexer);
+        let mut lexer = Lexer::new(&source);
+        let mut parser = Parser::new(&mut lexer);
 
-        //println!("{:?}\n{:?}", parser.parse(), parser.tokens);
+        println!("{:?}\n{:?}", parser.parse(), parser.tokens);
 
         let mut lexer = Lexer::new(&source);
         let mut parser = Parser::new(&mut lexer);
@@ -40,7 +41,15 @@ fn main() {
         let mut compiler = Compiler::new(&context, &builder, &module);
 
         println!("{}: Compiling source code", "[INFO]".green());
-        compiler.compile(parser.parse().unwrap());
+        let ast = parser.parse();
+        if let Ok(ast) = ast.clone() {
+            compiler.compile(ast);
+        }
+
+        if let Err(e) = ast {
+            println!("{}", e);
+            exit(-1);
+        }
 
         println!("{}: Generating IR file", "[INFO]".green());
         module

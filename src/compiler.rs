@@ -211,8 +211,18 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
                 let expr = self.compile_expr(expr)?;
 
                 if let Value::Int(i) = expr {
-                    let cond = self.builder.build_int_compare(IntPredicate::NE, i, self.context.bool_type().const_int(0, true), "cond");
-                    let function = self.builder.get_insert_block().unwrap().get_parent().unwrap();
+                    let cond = self.builder.build_int_compare(
+                        IntPredicate::NE,
+                        i,
+                        self.context.bool_type().const_int(0, true),
+                        "cond",
+                    );
+                    let function = self
+                        .builder
+                        .get_insert_block()
+                        .unwrap()
+                        .get_parent()
+                        .unwrap();
 
                     let then = self.context.append_basic_block(function, "then");
                     let els = self.context.append_basic_block(function, "else");
@@ -235,7 +245,44 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
                     self.builder.build_unconditional_branch(merge);
 
                     self.builder.position_at_end(merge);
+                }
+            }
+            Statement::While { expr, block } => {
 
+                let function = self
+                    .builder
+                    .get_insert_block()
+                    .unwrap()
+                    .get_parent()
+                    .unwrap();
+
+                let header = self.context.append_basic_block(function, "while_header");
+                let then = self.context.append_basic_block(function, "then");
+                let merge = self.context.append_basic_block(function, "whilecont");
+
+                self.builder.build_unconditional_branch(header);
+
+                self.builder.position_at_end(header);
+
+                let expr = self.compile_expr(expr)?;
+
+                if let Value::Int(i) = expr {
+                    let cond = self.builder.build_int_compare(
+                        IntPredicate::NE,
+                        i,
+                        self.context.bool_type().const_int(0, true),
+                        "cond",
+                    );
+
+                    self.builder.build_conditional_branch(cond, then, merge);
+
+                    self.builder.position_at_end(then);
+
+                    self.compile_statement(*block)?;
+
+                    self.builder.build_unconditional_branch(header);
+
+                    self.builder.position_at_end(merge);
                 }
             }
             Statement::Ret(expr) => match self.compile_expr(expr)? {
@@ -258,7 +305,7 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
                 for st in bl.iter() {
                     self.compile_statement(st.clone())?;
                 }
-            },
+            }
             _ => (),
         }
 
@@ -324,8 +371,9 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
                             Value::Function(_, _) => todo!(),
                             Value::None => todo!(),
                             Value::Pointer(p) => {
-                                self.builder
-                                    .build_store(self.variables.get(id.as_str()).unwrap().ptr, p);
+                                let alloca = self.builder.build_alloca(p.get_type(), id.as_str());
+                                self.builder.build_store(alloca, p);
+                                self.variables.get_mut(&id).unwrap().ptr = alloca;
                             }
                             Value::Global(p) => {
                                 self.builder
@@ -360,7 +408,7 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
                                         .into_int_value(),
                                 ));
                             } else {
-                                return Ok(Value::None)
+                                return Ok(Value::None);
                             }
                         }
                         _ => return Ok(Value::None),
@@ -387,7 +435,7 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
                                         .into_int_value(),
                                 ));
                             } else {
-                                return Ok(Value::None)
+                                return Ok(Value::None);
                             }
                         }
                         _ => return Ok(Value::None),
@@ -414,7 +462,7 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
                                         .into_int_value(),
                                 ));
                             } else {
-                                return Ok(Value::None)
+                                return Ok(Value::None);
                             }
                         }
                         _ => return Ok(Value::None),
@@ -441,7 +489,7 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
                                         .into_int_value(),
                                 ));
                             } else {
-                                return Ok(Value::None)
+                                return Ok(Value::None);
                             }
                         }
                         _ => return Ok(Value::None),
@@ -467,7 +515,11 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
                         Value::None => Ok(Value::None),
                         Value::Pointer(p) => {
                             if let Value::Int(i) = rhs {
-                                let p1 = self.builder.build_ptr_to_int(p, self.context.i64_type(), "tmp");
+                                let p1 = self.builder.build_ptr_to_int(
+                                    p,
+                                    self.context.i64_type(),
+                                    "tmp",
+                                );
                                 let p1 = self.builder.build_int_add(p1, i, "tmpadd");
                                 let sum = self.builder.build_int_to_ptr(p1, p.get_type(), "tmpptr");
                                 return Ok(Value::Pointer(sum));
@@ -641,6 +693,8 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
                 }
                 _ => Ok(Value::None),
             },
+            Expression::True => Ok(Value::Int(self.context.bool_type().const_int(1, false))),
+            Expression::False => Ok(Value::Int(self.context.bool_type().const_int(0, false))),
         }
     }
 }

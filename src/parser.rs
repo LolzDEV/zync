@@ -185,6 +185,10 @@ pub enum Statement {
         block: Box<Statement>,
         el: Option<Box<Statement>>,
     },
+    While {
+        expr: Expression,
+        block: Box<Statement>,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -206,6 +210,8 @@ pub enum Expression {
         parameters: Vec<Expression>,
         ret_type: Type,
     },
+    True,
+    False,
     Char(char),
     String(String),
 }
@@ -402,6 +408,8 @@ impl Parser {
             } => Ok(ret_type),
             Expression::String(_) => Ok(Type::CharPtr),
             Expression::Char(_) => Ok(Type::Char),
+            Expression::True => Ok(Type::Bool),
+            Expression::False => Ok(Type::Bool),
         }
     }
 
@@ -430,6 +438,10 @@ impl Parser {
             return self.if_statement();
         }
 
+        if let Ok(_) = self.expect(vec![lexer::Token::While]) {
+            return self.while_statement();
+        }
+
         self.expr_statement()
     }
 
@@ -451,6 +463,26 @@ impl Parser {
                 expr,
                 block: Box::new(block),
                 el,
+            });
+        } else {
+            return Err(Error::ParserError {
+                at: tok.position(),
+                message: "Expected Bool".to_string(),
+            });
+        }
+    }
+
+    pub fn while_statement(&mut self) -> Result<Statement, Error> {
+        let tok = self.next_token()?;
+        self.position -= 1;
+        let expr = self.expr()?;
+
+        if let Type::Bool = self.evaluate_expr_type(expr.clone())? {
+            let block = self.block()?;
+
+            return Ok(Statement::While {
+                expr,
+                block: Box::new(block),
             });
         } else {
             return Err(Error::ParserError {
@@ -834,6 +866,18 @@ impl Parser {
 
         self.position -= 1;
 
+        if let lexer::Token::True = self.next_token()?.token() {
+            return Ok(Expression::True);
+        }
+
+        self.position -= 1;
+
+        if let lexer::Token::False = self.next_token()?.token() {
+            return Ok(Expression::False);
+        }
+
+        self.position -= 1;
+
         if let lexer::Token::Integer(n) = self.next_token()?.token() {
             if let Ok(_) = self.expect(vec![lexer::Token::I64Type]) {
                 return Ok(Expression::Number(Number::I64(n)));
@@ -1036,8 +1080,6 @@ impl Parser {
         let mut funcs = self.process_functions()?;
 
         self.functions.append(&mut funcs);
-
-        println!("{:?}", self.functions);
 
         loop {
             if self.position == self.tokens.len() {

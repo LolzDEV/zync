@@ -1,17 +1,19 @@
 use "stdio.zh";
 
-fn main(a: i32, b: i64) -> i64 {
-    let s = "hello";
-    let ss = "helloo\n";
+fn main() -> i64 {
+    let s = "hello\n";
+    let a = 0;
 
-    let sss = ss+1i64;
+    let b = true;
 
-    let a = 2;
+    while b {
+        if a == 3 {
+            b = false;
+        }
 
-    if a == 1 {
-        print(s+1i64, 4);
-    } else {
-        print(ss, 7);
+        print(s, 6);
+
+        a = a + 1;
     }
 
     ret 0i64;

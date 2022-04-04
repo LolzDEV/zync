@@ -38,6 +38,7 @@ pub enum Token {
     VoidType,
     Use,
     If,
+    While,
     Else,
     Greater,
     Less,
@@ -99,9 +100,15 @@ impl Lexer {
         let mut current_char = ' ';
         let mut is_char = false;
         let mut pos = FilePosition { line: 0, column: 0 };
+        let mut skip = false;
 
         for line in self.source.lines().into_iter().skip(self.current_line) {
             for c in line.chars().into_iter().skip(self.current) {
+                if skip {
+                    skip = false;
+                    continue;
+                }
+
                 pos = FilePosition {
                     line: self.current_line + 1,
                     column: self.current + 1,
@@ -210,6 +217,7 @@ impl Lexer {
                                 "use" => return (Token::Use, pos),
                                 "if" => return (Token::If, pos),
                                 "else" => return (Token::Else, pos),
+                                "while" => return (Token::While, pos),
                                 "true" => return (Token::True, pos),
                                 "false" => return (Token::False, pos),
                                 _ => {
@@ -225,6 +233,14 @@ impl Lexer {
                         if self.match_char('n') {
                             current_string.push('\n');
                             self.current += 1;
+                            skip = true;
+                            continue;
+                        }
+
+                        if self.match_char('0') {
+                            current_string.push('\0');
+                            self.current += 1;
+                            skip = true;
                             continue;
                         }
                     }
